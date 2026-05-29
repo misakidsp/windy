@@ -24,6 +24,9 @@ You may:
 - View, clone, and download this repository.
 - Build and run Windy for your own personal or internal evaluation.
 - Modify Windy for your own personal or internal evaluation.
+- Create and publish a fork on GitHub or similar source-hosting services solely
+  for evaluation, review, or submitting pull requests to the upstream
+  repository.
 - Submit issues, feedback, and pull requests to the upstream repository.
 - Share short excerpts of the code or documentation for discussion, review, or
   issue reporting, provided that you preserve attribution.
@@ -33,8 +36,10 @@ You may:
 Without prior written permission from the copyright holder, you may not:
 
 - Redistribute Windy, modified versions of Windy, or packaged builds of Windy.
-- Publish or host a public fork, mirror, package, installer, app-store listing,
-  or binary distribution of Windy.
+- Publish or host a public mirror, package, installer, app-store listing,
+  binary distribution, or independently maintained derivative of Windy.
+- Use a fork of Windy for any purpose other than evaluation, review, or
+  contributing changes back to the upstream repository.
 - Use Windy or modified versions of Windy for commercial services, paid
   offerings, bundled products, or customer-facing deployments.
 - Sublicense, sell, rent, lease, or otherwise transfer rights to Windy.

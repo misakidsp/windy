@@ -118,6 +118,7 @@ Windy bundles UDEV Gothic for consistent file-manager and terminal display.
 ## License
 
 Windy is currently released under the Windy Public Beta License. It is
-source-available for beta evaluation, but redistribution, public forks/mirrors,
-commercial use, and packaged binary distribution are restricted without prior
-permission. See [LICENSE](LICENSE).
+source-available for beta evaluation. Forks for review and pull requests are
+allowed, but redistribution, public mirrors, independently maintained
+derivatives, commercial use, and packaged binary distribution are restricted
+without prior permission. See [LICENSE](LICENSE).
