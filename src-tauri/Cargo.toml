@@ -28,7 +28,7 @@ flate2 = "1"
 md-5 = "0.10"
 portable-pty = "0.9"
 regex = "1"
-ssh2 = "0.9"
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 tar = "0.4"
 trash = "5"
 zip = { version = "2", default-features = false, features = ["deflate"] }
