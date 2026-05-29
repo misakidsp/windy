@@ -1,0 +1,19 @@
+.tmp_xlsx_inspect/
+hatch-pet-runs/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Tauri / JS / Rust build outputs
+node_modules/
+.pnpm-store/
+.svelte-kit/
+dist/
+build/
+target/
+src-tauri/target/
+
+# Environment files
+.env
+.env.*

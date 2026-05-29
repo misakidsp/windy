@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for Windy's single main window. Fine-grained authorization is handled at Rust command boundaries; see docs/tauri_capability_policy.md.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}
