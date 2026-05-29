@@ -137,12 +137,106 @@ Useful path-copy and terminal integration keys:
 Windy stores user settings in the operating system's app configuration
 directory. The exact location depends on the platform.
 
-Settings include:
+Typical locations are:
 
-- Appearance
-- Operation behavior
-- SFTP behavior
-- Location profiles
-- External command templates
+- macOS: `~/Library/Application Support/windy`
+- Windows: `%APPDATA%\windy`
+- Linux: `$XDG_CONFIG_HOME/windy` or `~/.config/windy`
 
-The generated sample external commands are intentionally conservative.
+Windy creates the files when it first needs them. The main files are:
+
+| File | Purpose |
+| --- | --- |
+| `commands.json` | Registered external command templates |
+| `locations.json` | Local favorites, saved searches, and SFTP profiles |
+| `operation-failures.log` | Optional log for failed file operations |
+| `settings/operation.json` | Delete behavior, operation result display, cancellation behavior |
+| `settings/sftp.json` | SFTP session and transfer behavior |
+| `settings/appearance.json` | Fonts, UI colors, extension colors |
+| `settings/keybind.json` | Editable key bindings |
+| `settings/language.json` | UI message overrides and locale |
+
+Example `settings/operation.json`:
+
+```json
+{
+  "useTrash": true,
+  "operationResult": {
+    "showStatus": true,
+    "showFailureDialog": true,
+    "printToTerminal": false,
+    "saveFailureLog": true
+  },
+  "operationCancel": {
+    "doubleEscEnabled": true,
+    "doubleEscWindowMs": 700
+  }
+}
+```
+
+Example `settings/sftp.json`:
+
+```json
+{
+  "sftpSession": {
+    "lifecycle": "keepRecent",
+    "maxSessions": 2,
+    "idleDisconnectMinutes": 0
+  },
+  "sftpTransfer": {
+    "partFileThresholdBytes": 1048576
+  }
+}
+```
+
+Example `settings/appearance.json` fragment:
+
+```json
+{
+  "schemaVersion": 1,
+  "fonts": {
+    "uiFamily": "UDEV Gothic",
+    "terminalFamily": "UDEV Gothic",
+    "uiSize": 12,
+    "terminalSize": 12,
+    "viewerSize": 12
+  },
+  "extensionColors": {
+    ".md": "#f9d65c",
+    ".rs": "#fb923c",
+    ".ts": "#7dd3fc"
+  }
+}
+```
+
+Example `commands.json`:
+
+```json
+{
+  "commands": [
+    {
+      "id": "echo-selected-paths",
+      "name": "Echo selected paths",
+      "description": "Print selected local paths in the terminal.",
+      "template": "printf '%s\\n' {args}",
+      "returnFocus": false
+    }
+  ]
+}
+```
+
+Common external command placeholders include:
+
+| Placeholder | Meaning |
+| --- | --- |
+| `{args}` | Selected local paths, shell-quoted as command arguments |
+| `{cwd}` | Current local directory in the active pane |
+| `{otherCwd}` | Current local directory in the opposite pane |
+| `{names}` | Selected file names |
+| `{first}` | First selected local path |
+| `{marked}` | Marked local paths in the active pane |
+| `{otherMarked}` | Marked local paths in the opposite pane |
+
+The generated sample external commands are intentionally conservative. When
+editing these files by hand, close Windy first or reload the relevant view after
+editing.

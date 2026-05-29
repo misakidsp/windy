@@ -124,12 +124,104 @@ Windy は OpenSSH 互換の `known_hosts` 検証を使います。host key が�
 
 Windy は、OSごとのアプリ設定ディレクトリにユーザー設定を保存します。具体的な場所はプラットフォームによって異なります。
 
-設定には以下が含まれます。
+代表的な保存先は以下です。
 
-- 外観
-- 操作挙動
-- SFTP挙動
-- Locationプロファイル
-- 外部コマンドテンプレート
+- macOS: `~/Library/Application Support/windy`
+- Windows: `%APPDATA%\windy`
+- Linux: `$XDG_CONFIG_HOME/windy` または `~/.config/windy`
 
-初回生成されるサンプル外部コマンドは、安全側の内容に限定されています。
+Windy は必要になったタイミングで設定ファイルを作成します。主なファイルは以下です。
+
+| ファイル | 用途 |
+| --- | --- |
+| `commands.json` | 登録済み外部コマンドテンプレート |
+| `locations.json` | ローカルお気に入り、保存済み検索、SFTPプロファイル |
+| `operation-failures.log` | ファイル操作失敗時の任意ログ |
+| `settings/operation.json` | 削除挙動、操作結果表示、キャンセル挙動 |
+| `settings/sftp.json` | SFTPセッションと転送挙動 |
+| `settings/appearance.json` | フォント、UIカラー、拡張子カラー |
+| `settings/keybind.json` | 編集可能なキーバインド |
+| `settings/language.json` | UIメッセージ上書きとlocale |
+
+`settings/operation.json` の例:
+
+```json
+{
+  "useTrash": true,
+  "operationResult": {
+    "showStatus": true,
+    "showFailureDialog": true,
+    "printToTerminal": false,
+    "saveFailureLog": true
+  },
+  "operationCancel": {
+    "doubleEscEnabled": true,
+    "doubleEscWindowMs": 700
+  }
+}
+```
+
+`settings/sftp.json` の例:
+
+```json
+{
+  "sftpSession": {
+    "lifecycle": "keepRecent",
+    "maxSessions": 2,
+    "idleDisconnectMinutes": 0
+  },
+  "sftpTransfer": {
+    "partFileThresholdBytes": 1048576
+  }
+}
+```
+
+`settings/appearance.json` の一部例:
+
+```json
+{
+  "schemaVersion": 1,
+  "fonts": {
+    "uiFamily": "UDEV Gothic",
+    "terminalFamily": "UDEV Gothic",
+    "uiSize": 12,
+    "terminalSize": 12,
+    "viewerSize": 12
+  },
+  "extensionColors": {
+    ".md": "#f9d65c",
+    ".rs": "#fb923c",
+    ".ts": "#7dd3fc"
+  }
+}
+```
+
+`commands.json` の例:
+
+```json
+{
+  "commands": [
+    {
+      "id": "echo-selected-paths",
+      "name": "Echo selected paths",
+      "description": "Print selected local paths in the terminal.",
+      "template": "printf '%s\\n' {args}",
+      "returnFocus": false
+    }
+  ]
+}
+```
+
+外部コマンドでよく使うプレースホルダ:
+
+| プレースホルダ | 意味 |
+| --- | --- |
+| `{args}` | 選択中のローカルパス。コマンド引数としてshell quoteされる |
+| `{cwd}` | アクティブペインの現在のローカルディレクトリ |
+| `{otherCwd}` | 反対ペインの現在のローカルディレクトリ |
+| `{names}` | 選択中のファイル名 |
+| `{first}` | 最初の選択ローカルパス |
+| `{marked}` | アクティブペインのマーク済みローカルパス |
+| `{otherMarked}` | 反対ペインのマーク済みローカルパス |
+
+初回生成されるサンプル外部コマンドは、安全側の内容に限定されています。手動で設定ファイルを編集する場合は、Windyを閉じてから編集するか、編集後に該当画面を再読み込みしてください。

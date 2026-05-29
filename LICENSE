@@ -1,21 +1,71 @@
-MIT License
+Windy Public Beta License
+Version 1.0
 
 Copyright (c) 2026 misakidsp
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This license applies to the Windy application source code and documentation in
+this repository, except for third-party components and files that include their
+own license notices. Third-party components remain governed by their respective
+licenses.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Purpose
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Windy is made available during its public beta period so that users can inspect,
+build, run, evaluate, and provide feedback on the software before a broader
+release decision is made.
+
+This is a source-available beta license. It is not an open source license as
+defined by the Open Source Initiative.
+
+2. Permitted Use
+
+You may:
+
+- View, clone, and download this repository.
+- Build and run Windy for your own personal or internal evaluation.
+- Modify Windy for your own personal or internal evaluation.
+- Submit issues, feedback, and pull requests to the upstream repository.
+- Share short excerpts of the code or documentation for discussion, review, or
+  issue reporting, provided that you preserve attribution.
+
+3. Restrictions
+
+Without prior written permission from the copyright holder, you may not:
+
+- Redistribute Windy, modified versions of Windy, or packaged builds of Windy.
+- Publish or host a public fork, mirror, package, installer, app-store listing,
+  or binary distribution of Windy.
+- Use Windy or modified versions of Windy for commercial services, paid
+  offerings, bundled products, or customer-facing deployments.
+- Sublicense, sell, rent, lease, or otherwise transfer rights to Windy.
+- Remove or obscure copyright notices, beta notices, or this license.
+- Use the Windy name, icon, or branding in a way that suggests an unofficial
+  build or derivative is an official release.
+
+4. Contributions
+
+By submitting a pull request, patch, issue attachment, or other contribution to
+the upstream repository, you grant the copyright holder a perpetual,
+worldwide, royalty-free license to use, reproduce, modify, distribute, and
+sublicense that contribution as part of Windy under this license or any future
+license chosen by the copyright holder.
+
+5. Future Licensing
+
+The copyright holder may change the license for future versions of Windy. Code
+released under this beta license remains governed by this license unless the
+copyright holder explicitly publishes it under another license.
+
+6. No Warranty
+
+WINDY IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, AND NONINFRINGEMENT. USE WINDY AT YOUR OWN RISK,
+ESPECIALLY FOR FILE OPERATIONS, REMOTE OPERATIONS, AND DESTRUCTIVE OPERATIONS.
+
+7. Limitation of Liability
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM,
+DAMAGES, DATA LOSS, BUSINESS INTERRUPTION, OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
+WITH WINDY OR THE USE OF WINDY.
