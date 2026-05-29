@@ -1,5 +1,7 @@
 # User Guide
 
+[日本語](USER_GUIDE.ja.md)
+
 Windy is a dual-pane file manager built around keyboard operation.
 
 The screen is centered on two file panes. The bottom area is a terminal pane that

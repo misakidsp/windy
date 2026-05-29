@@ -1,5 +1,7 @@
 # Windy
 
+[日本語](README.ja.md)
+
 Windy is a keyboard-first, dual-pane file manager for desktop power users.
 
 It combines two file panes, a built-in terminal, archive browsing, local search,
