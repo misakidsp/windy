@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub(crate) const SEARCH_MAX_RESULTS: usize = 10_000;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchDirectoryRequest {
@@ -37,6 +39,7 @@ pub(crate) struct SearchDirectoryListing {
     pub(crate) display_path: String,
     pub(crate) query_label: String,
     pub(crate) entries: Vec<FileEntry>,
+    pub(crate) truncated: bool,
 }
 
 #[tauri::command]
@@ -82,6 +85,7 @@ pub(crate) fn search_directory_blocking(
     }
 
     let mut entries = Vec::new();
+    let mut truncated = false;
     collect_search_entries(
         &root_path,
         &root_path,
@@ -91,6 +95,7 @@ pub(crate) fn search_directory_blocking(
         &hidden_mode,
         &readonly_mode,
         &mut entries,
+        &mut truncated,
     )?;
     sort_entries(&mut entries);
 
@@ -121,6 +126,7 @@ pub(crate) fn search_directory_blocking(
         display_path: format!("search:{} [{}]", path_to_string(&root_path), query_label),
         query_label,
         entries,
+        truncated,
     })
 }
 
@@ -133,10 +139,18 @@ fn collect_search_entries(
     hidden_mode: &str,
     readonly_mode: &str,
     entries: &mut Vec<FileEntry>,
+    truncated: &mut bool,
 ) -> Result<(), String> {
+    if *truncated {
+        return Ok(());
+    }
+
     for entry in fs::read_dir(current_path)
         .map_err(|error| format_io_error("read search root", current_path, error))?
     {
+        if *truncated {
+            break;
+        }
         let Ok(entry) = entry else {
             continue;
         };
@@ -155,6 +169,10 @@ fn collect_search_entries(
             readonly_mode,
         ) {
             entries.push(file_entry);
+            if entries.len() >= SEARCH_MAX_RESULTS {
+                *truncated = true;
+                break;
+            }
         }
         if should_recurse {
             let _ = collect_search_entries(
@@ -166,6 +184,7 @@ fn collect_search_entries(
                 hidden_mode,
                 readonly_mode,
                 entries,
+                truncated,
             );
         }
     }
@@ -227,6 +246,43 @@ fn search_entry_matches(
         return false;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn request(root_path: String) -> SearchDirectoryRequest {
+        SearchDirectoryRequest {
+            root_path,
+            name_regex: String::new(),
+            recursive: false,
+            min_size_bytes: None,
+            max_size_bytes: None,
+            modified_after: None,
+            modified_before: None,
+            kind: None,
+            hidden_mode: None,
+            readonly_mode: None,
+        }
+    }
+
+    #[test]
+    fn search_directory_truncates_large_result_sets() {
+        let root = tempdir().expect("create search root");
+        for index in 0..=SEARCH_MAX_RESULTS {
+            fs::write(root.path().join(format!("{index:05}.txt")), "x")
+                .expect("write search fixture");
+        }
+
+        let listing = search_directory_blocking(request(root.path().to_string_lossy().to_string()))
+            .expect("search large fixture");
+
+        assert_eq!(listing.entries.len(), SEARCH_MAX_RESULTS);
+        assert!(listing.truncated);
+    }
 }
 
 pub(crate) fn normalized_search_kind(value: Option<&str>) -> Result<String, String> {

@@ -278,6 +278,7 @@ const searchPane = pane({
     searchKind: "all",
     hiddenMode: "exclude",
     readonlyMode: "any",
+    truncated: false,
   },
 });
 assert.equal(operationSupportedForPaneSources("mkdir", searchPane, null), false);

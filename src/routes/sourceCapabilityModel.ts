@@ -253,5 +253,6 @@ function sourceStub(kind: PaneSourceKind): PaneSource {
     searchKind: "all",
     hiddenMode: "exclude",
     readonlyMode: "any",
+    truncated: false,
   };
 }

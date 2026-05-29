@@ -96,9 +96,9 @@ assert.deepEqual(localCommandTargets(markedCommandTargetsForPane(selectedPane), 
   { key: "/tmp/b.txt", name: "b.txt", path: "/tmp/b.txt", kind: "file", mode: null, sourceKind: "local" },
 ]);
 assert.deepEqual(
-  localCommandTargets(markedCommandTargetsForPane({ ...selectedPane, source: { kind: "search", location: "search", displayName: "search", rootPath: "/tmp", returnPath: "/tmp", nameRegex: "", recursive: false, minSizeBytes: null, maxSizeBytes: null, modifiedAfter: null, modifiedBefore: null, searchKind: "all", hiddenMode: "exclude", readonlyMode: "any" } }), {
+  localCommandTargets(markedCommandTargetsForPane({ ...selectedPane, source: { kind: "search", location: "search", displayName: "search", rootPath: "/tmp", returnPath: "/tmp", nameRegex: "", recursive: false, minSizeBytes: null, maxSizeBytes: null, modifiedAfter: null, modifiedBefore: null, searchKind: "all", hiddenMode: "exclude", readonlyMode: "any", truncated: false } }), {
     ...selectedPane,
-    source: { kind: "search", location: "search", displayName: "search", rootPath: "/tmp", returnPath: "/tmp", nameRegex: "", recursive: false, minSizeBytes: null, maxSizeBytes: null, modifiedAfter: null, modifiedBefore: null, searchKind: "all", hiddenMode: "exclude", readonlyMode: "any" },
+    source: { kind: "search", location: "search", displayName: "search", rootPath: "/tmp", returnPath: "/tmp", nameRegex: "", recursive: false, minSizeBytes: null, maxSizeBytes: null, modifiedAfter: null, modifiedBefore: null, searchKind: "all", hiddenMode: "exclude", readonlyMode: "any", truncated: false },
   }),
   [],
 );

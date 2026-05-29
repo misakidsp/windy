@@ -140,6 +140,7 @@ export type SearchDirectoryListing = {
   displayPath: string;
   queryLabel: string;
   entries: FileEntry[];
+  truncated: boolean;
 };
 
 export type GitStatusListing = {
@@ -195,6 +196,7 @@ export type SearchPaneSource = {
   searchKind: SearchKind;
   hiddenMode: SearchHiddenMode;
   readonlyMode: SearchReadonlyMode;
+  truncated: boolean;
 };
 
 export type DiffPaneSource = {

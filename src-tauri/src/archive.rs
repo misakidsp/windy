@@ -665,7 +665,7 @@ fn extract_zip_archive_to_directory(
         let Some(enclosed_name) = file.enclosed_name() else {
             continue;
         };
-        let destination = destination_root.join(enclosed_name);
+        let destination = archive_destination_path(destination_root, &enclosed_name)?;
 
         if file.is_dir() {
             fs::create_dir_all(&destination).map_err(|error| {
@@ -712,7 +712,8 @@ fn extract_tar_archive_to_directory(
             .map_err(|error| format!("Read archive entry path failed: {error}"))?;
         let safe_relative = safe_archive_relative_path(&path)
             .ok_or_else(|| format!("Archive entry has an unsafe path: '{}'", path.display()))?;
-        unpack_tar_entry(&mut entry, &destination_root.join(safe_relative))?;
+        let destination = archive_destination_path(destination_root, &safe_relative)?;
+        unpack_tar_entry(&mut entry, &destination)?;
     }
     Ok(destination_root.to_path_buf())
 }
@@ -778,7 +779,7 @@ fn copy_zip_archive_entry_to_directory(
             let destination = if relative.is_empty() {
                 destination_root.clone()
             } else {
-                destination_root.join(relative)
+                archive_destination_path(&destination_root, Path::new(relative))?
             };
             extract_zip_file_entry(&mut file, &destination)?;
             copied = true;
@@ -826,7 +827,7 @@ fn copy_tar_archive_entry_to_directory(
             let destination = if relative.is_empty() {
                 destination_root.clone()
             } else {
-                destination_root.join(relative)
+                archive_destination_path(&destination_root, Path::new(relative))?
             };
             unpack_tar_entry(&mut entry, &destination)?;
             copied = true;
@@ -980,6 +981,26 @@ fn extract_zip_file_entry(
     Ok(())
 }
 
+fn archive_destination_path(
+    destination_root: &Path,
+    relative_path: &Path,
+) -> Result<PathBuf, String> {
+    let safe_relative = safe_archive_relative_path(relative_path).ok_or_else(|| {
+        format!(
+            "Archive entry has an unsafe path: '{}'",
+            relative_path.display()
+        )
+    })?;
+    let destination = destination_root.join(safe_relative);
+    if !destination.starts_with(destination_root) {
+        return Err(format!(
+            "Archive entry would extract outside the destination: '{}'",
+            relative_path.display()
+        ));
+    }
+    Ok(destination)
+}
+
 fn unpack_tar_entry<R: Read>(
     entry: &mut tar::Entry<'_, R>,
     destination: &Path,
@@ -1053,4 +1074,28 @@ fn archive_inner_leaf_name(inner_path: &str) -> Result<&str, String> {
         .next()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "Archive entry has no file name.".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archive_destination_rejects_parent_traversal() {
+        let root = Path::new("/tmp/windy-extract");
+
+        let result = archive_destination_path(root, Path::new("../outside.txt"));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn archive_destination_keeps_safe_paths_inside_root() {
+        let root = Path::new("/tmp/windy-extract");
+
+        let destination =
+            archive_destination_path(root, Path::new("docs/readme.txt")).expect("safe path");
+
+        assert_eq!(destination, root.join("docs").join("readme.txt"));
+    }
 }

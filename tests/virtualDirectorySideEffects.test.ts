@@ -14,7 +14,7 @@ const invoke: TauriInvoke = async (command, args) => {
     return { archivePath: "/tmp/a.zip", innerPath: "docs", displayPath: "a.zip::/docs", entries: [] } as never;
   }
   if (command === "search_directory") {
-    return { rootPath: "/work", displayPath: "search:/work", queryLabel: "*", entries: [] } as never;
+    return { rootPath: "/work", displayPath: "search:/work", queryLabel: "*", entries: [], truncated: false } as never;
   }
   if (command === "list_sftp_directory") {
     return { connectionId: "conn-1", displayName: "remote", remotePath: "/srv", displayPath: "sftp:/srv", entries: [] } as never;

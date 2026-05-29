@@ -15,6 +15,7 @@ use std::{
     time::Duration,
 };
 use tauri::State;
+use zeroize::Zeroizing;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,22 +240,35 @@ pub(crate) fn list_sftp_directory(
 fn test_sftp_connection_blocking(
     request: SftpConnectionRequest,
 ) -> Result<SftpConnectedSession, String> {
-    let host = request.host.trim();
-    let username = request.username.trim();
-    let auth_kind = normalized_sftp_auth_kind(request.auth_kind.as_deref());
-    let private_key_path = normalized_optional_string(request.private_key_path.as_deref());
-    let passphrase = normalized_optional_string(request.passphrase.as_deref());
-    let remote_path = normalized_sftp_remote_path(request.remote_path.as_deref());
+    let SftpConnectionRequest {
+        name,
+        host,
+        port,
+        username,
+        auth_kind,
+        password,
+        private_key_path,
+        passphrase,
+        remote_path,
+        trust_host_key,
+    } = request;
+    let password = Zeroizing::new(password);
+    let passphrase = normalized_optional_string(passphrase.as_deref()).map(Zeroizing::new);
+    let host = host.trim();
+    let username = username.trim();
+    let auth_kind = normalized_sftp_auth_kind(auth_kind.as_deref());
+    let private_key_path = normalized_optional_string(private_key_path.as_deref());
+    let remote_path = normalized_sftp_remote_path(remote_path.as_deref());
     validate_sftp_connection_request(
         host,
-        request.port,
+        port,
         username,
         &auth_kind,
-        &request.password,
+        &password,
         private_key_path.as_deref(),
     )?;
 
-    let stream = connect_sftp_tcp_stream(host, request.port)?;
+    let stream = connect_sftp_tcp_stream(host, port)?;
 
     let mut session =
         Session::new().map_err(|error| format!("Create SSH session failed: {error}"))?;
@@ -262,19 +276,14 @@ fn test_sftp_connection_blocking(
     session
         .handshake()
         .map_err(|error| format!("SSH handshake failed: {error}"))?;
-    verify_known_host(
-        &session,
-        host,
-        request.port,
-        request.trust_host_key.unwrap_or(false),
-    )?;
+    verify_known_host(&session, host, port, trust_host_key.unwrap_or(false))?;
     authenticate_ssh_session(
         &session,
         username,
         &auth_kind,
-        &request.password,
+        &password,
         private_key_path.as_deref(),
-        passphrase.as_deref(),
+        passphrase.as_deref().map(|value| value.as_str()),
         "SFTP",
     )?;
 
@@ -286,16 +295,15 @@ fn test_sftp_connection_blocking(
         "sftp-{}",
         SFTP_CONNECTION_ID.fetch_add(1, Ordering::Relaxed)
     );
-    let display_name = request
-        .name
+    let display_name = name
         .as_deref()
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("{username}@{host}:{}", request.port));
+        .unwrap_or_else(|| format!("{username}@{host}:{port}"));
     let terminal_profile = SshTerminalProfile {
         host: host.to_string(),
-        port: request.port,
+        port,
         username: username.to_string(),
         auth_kind,
         private_key_path,

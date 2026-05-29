@@ -541,10 +541,17 @@
       const listing = await searchDirectory(invoke, request);
       if (isStaleLoad(loadGenerations, paneId, load.generation)) return false;
 
+      if (listing.truncated) {
+        statusMessage = `Search stopped at ${listing.entries.length} item(s). Narrow the query to inspect more.`;
+        lastCommandId = "search.truncated";
+      }
+
       if (!forceLargeResult && listing.entries.length >= largeSearchResultWarningThreshold) {
         pendingLargeSearchResult = { paneId, listing, request, returnPath };
         updatePane(paneId, { loading: false, error: null });
-        statusMessage = `Search found ${listing.entries.length} item(s). Press Enter to display or Esc to cancel.`;
+        statusMessage = listing.truncated
+          ? `Search stopped at ${listing.entries.length} item(s). Press Enter to display or Esc to cancel.`
+          : `Search found ${listing.entries.length} item(s). Press Enter to display or Esc to cancel.`;
         lastCommandId = "search.largeResultWarning";
         focusActivePaneAfterDialog();
         return false;
@@ -573,6 +580,7 @@
             searchKind: request.kind,
             hiddenMode: request.hiddenMode,
             readonlyMode: request.readonlyMode,
+            truncated: false,
           },
           `search:${request.rootPath}`,
           error,
@@ -1726,7 +1734,9 @@
     const pending = pendingLargeSearchResult;
     pendingLargeSearchResult = null;
     applySearchListing(pending.paneId, pending.listing, pending.request, pending.returnPath);
-    statusMessage = `Search completed: ${pending.listing.entries.length} item(s).`;
+        statusMessage = pending.listing.truncated
+          ? `Search stopped at ${pending.listing.entries.length} item(s).`
+          : `Search completed: ${pending.listing.entries.length} item(s).`;
     lastCommandId = "search.largeResultDisplay";
     focusActivePaneAfterDialog();
   }
@@ -1756,7 +1766,10 @@
       searchDialogOpen = false;
       const applied = await loadSearchDirectory(activePaneId, request, returnPath);
       if (applied) {
-        statusMessage = `Search completed: ${panes[activePaneId].entries.length} item(s).`;
+        const source = panes[activePaneId].source;
+        statusMessage = source.kind === "search" && source.truncated
+          ? `Search stopped at ${panes[activePaneId].entries.length} item(s).`
+          : `Search completed: ${panes[activePaneId].entries.length} item(s).`;
         lastCommandId = "search.resultSource";
       }
       focusActivePaneAfterDialog();

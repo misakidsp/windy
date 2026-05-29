@@ -75,6 +75,7 @@ export function createSearchSource(
     searchKind: request.kind,
     hiddenMode: request.hiddenMode,
     readonlyMode: request.readonlyMode,
+    truncated: listing.truncated,
   };
 }
 

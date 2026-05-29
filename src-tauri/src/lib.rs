@@ -312,16 +312,30 @@ fn open_path(path: String) -> Result<(), String> {
 }
 
 fn open_path_blocking(path: PathBuf) -> Result<(), String> {
-    if !path.exists() {
-        return Err(format!("Path does not exist: {}", path_to_string(&path)));
+    let path = prepare_open_path(path)?;
+    spawn_open_command(&path).map_err(|error| format_io_error("open path", &path, error))
+}
+
+fn prepare_open_path(path: PathBuf) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty() {
+        return Err("Path is empty.".to_string());
     }
 
-    spawn_open_command(&path).map_err(|error| format_io_error("open path", &path, error))
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|error| format_io_error("resolve path", &path, error))?;
+    if !canonical_path.is_absolute() {
+        return Err(format!(
+            "Path must resolve to a local absolute path: {}",
+            path_to_string(&path)
+        ));
+    }
+    Ok(canonical_path)
 }
 
 #[cfg(target_os = "macos")]
 fn spawn_open_command(path: &Path) -> io::Result<()> {
-    Command::new("open").arg(path).spawn().map(|_| ())
+    Command::new("open").arg("--").arg(path).spawn().map(|_| ())
 }
 
 #[cfg(target_os = "windows")]
@@ -1260,6 +1274,21 @@ mod tests {
         let result = open_path_blocking(missing);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn prepare_open_path_resolves_url_like_file_names_as_local_paths() {
+        let root = temp_dir();
+        let target = root.path().join("javascript:alert(1)");
+        fs::write(&target, "local").context("write url-like local file");
+
+        let resolved = prepare_open_path(target).context("prepare url-like local file");
+
+        assert!(resolved.is_absolute());
+        assert_eq!(
+            resolved.file_name().and_then(|name| name.to_str()),
+            Some("javascript:alert(1)")
+        );
     }
 
     #[test]

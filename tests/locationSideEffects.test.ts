@@ -79,6 +79,7 @@ const source: SearchPaneSource = {
   searchKind: "file",
   hiddenMode: "include",
   readonlyMode: "any",
+  truncated: false,
 };
 
 assert.deepEqual(searchProfileSaveRequestFromSource(source), {

@@ -110,6 +110,7 @@ const source: SearchPaneSource = {
   searchKind: "file",
   hiddenMode: "only",
   readonlyMode: "readonly",
+  truncated: false,
 };
 assert.deepEqual(searchRequestFromSource(source), {
   rootPath: "/tmp/search",
