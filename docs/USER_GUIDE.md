@@ -120,7 +120,8 @@ Windy refuses the connection until you verify the server and update
 
 ## Terminal
 
-`tab` moves focus to the bottom terminal pane.
+`x` moves focus to the bottom terminal pane. `ctrl+x` returns focus from the
+bottom terminal pane to the file panes.
 
 Useful path-copy and terminal integration keys:
 

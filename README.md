@@ -102,7 +102,8 @@ Windy is designed around the keyboard.
 | `ctrl+n` | Open the location manager |
 | `/` | Open quick filter |
 | `f` | Open detailed search |
-| `tab` | Move focus to the terminal |
+| `x` | Move focus to the bottom terminal |
+| `ctrl+x` | Return focus from the bottom terminal to the file panes |
 | `?` | Show key help |
 
 See the [User Guide](docs/USER_GUIDE.md) for a broader walkthrough.
