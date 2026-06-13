@@ -1009,6 +1009,9 @@ fn unpack_tar_entry<R: Read>(
     if entry_type.is_symlink() || entry_type.is_hard_link() {
         return Err("Archive links are not allowed for extraction.".to_string());
     }
+    if !(entry_type.is_file() || entry_type.is_dir()) {
+        return Err("Archive special entries are not allowed for extraction.".to_string());
+    }
 
     if entry_type.is_dir() {
         fs::create_dir_all(destination)

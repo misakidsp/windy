@@ -239,6 +239,7 @@ const archivePane = pane({
     innerPath: "",
   },
 });
+assert.equal(operationSupportedForPaneSources("move", left, right), true);
 assert.equal(operationSupportedForPaneSources("copy", archivePane, right), true);
 assert.equal(operationSupportedForPaneSources("mkdir", archivePane, null), false);
 
@@ -284,6 +285,7 @@ const searchPane = pane({
 assert.equal(operationSupportedForPaneSources("mkdir", searchPane, null), false);
 assert.equal(operationSupportedForPaneSources("createFile", searchPane, null), false);
 assert.equal(operationSupportedForPaneSources("copy", searchPane, right), true);
+assert.equal(operationSupportedForPaneSources("move", searchPane, right), false);
 assert.equal(operationSupportedForPaneSources("createArchive", left, right), true);
 assert.equal(operationSupportedForPaneSources("createArchive", searchPane, right), true);
 assert.equal(operationSupportedForPaneSources("createArchive", sftpPane, right), false);

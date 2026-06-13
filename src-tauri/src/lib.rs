@@ -532,6 +532,17 @@ mod tests {
             .context(format!("append tar test symlink '{path}'"));
     }
 
+    fn append_tar_fifo<W: Write>(builder: &mut tar::Builder<W>, path: &str) {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Fifo);
+        header.set_size(0);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, path, io::empty())
+            .context(format!("append tar test fifo '{path}'"));
+    }
+
     #[test]
     fn list_directory_sorts_directories_first_then_names() {
         let root = temp_dir();
@@ -802,6 +813,36 @@ mod tests {
         assert_eq!(result.failed.len(), 1);
         assert!(result.failed[0].message.contains("links are not allowed"));
         assert!(!destination.join("links").exists());
+    }
+
+    #[test]
+    fn extract_tar_archive_rejects_special_entries() {
+        let root = temp_dir();
+        let archive_path = root.path().join("special.tar");
+        let destination = root.path().join("destination");
+        fs::create_dir(&destination).unwrap();
+
+        let archive_file = fs::File::create(&archive_path).unwrap();
+        let mut builder = tar::Builder::new(archive_file);
+        append_tar_file(&mut builder, "safe.txt", b"safe");
+        append_tar_fifo(&mut builder, "pipe");
+        builder.finish().unwrap();
+
+        let result = execute_file_operation_job_blocking(FileOperationJob {
+            id: None,
+            kind: FileOperationKind::ExtractArchive,
+            destination_path: Some(path_to_string(&destination)),
+            targets: vec![target(&archive_path)],
+            requested_name: None,
+            sftp_safe_transfer_part_threshold_bytes: None,
+        });
+
+        assert_eq!(result.succeeded.len(), 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(result.failed[0]
+            .message
+            .contains("special entries are not allowed"));
+        assert!(!destination.join("special").exists());
     }
 
     #[test]

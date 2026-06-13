@@ -62,7 +62,14 @@ export function operationSupportedByCapabilities(
     if (destinationPane.source.kind === "sftp") return sourcePane.source.kind === "local";
     return destinationPane.source.kind === "local";
   }
-  if (kind === "move") return source.canMoveTo && Boolean(destination?.canMoveTo);
+  if (kind === "move") {
+    return (
+      sourcePane.source.kind === "local" &&
+      destinationPane?.source.kind === "local" &&
+      source.canMoveTo &&
+      Boolean(destination?.canMoveTo)
+    );
+  }
   if (kind === "createArchive") {
     return (sourcePane.source.kind === "local" || sourcePane.source.kind === "search") && destinationPane?.source.kind === "local";
   }
@@ -82,7 +89,7 @@ function localCapabilities(): SourceCapability {
     canRead: true,
     canCopyFrom: true,
     canCopyTo: true,
-    canMoveTo: false,
+    canMoveTo: true,
     canRename: true,
     canDelete: true,
     canTrash: true,
