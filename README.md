@@ -101,7 +101,9 @@ Windy is designed around the keyboard.
 | `n f` | Create an empty file |
 | `ctrl+n` | Open the location manager |
 | `/` | Open quick filter |
-| `f` | Open detailed search |
+| `ctrl+f` | Open detailed search |
+| `, c` | Compare local panes recursively with MD5 |
+| `, g` | Open Git changed files |
 | `x` | Move focus to the bottom terminal |
 | `ctrl+x` | Return focus from the bottom terminal to the file panes |
 | `?` | Show key help |

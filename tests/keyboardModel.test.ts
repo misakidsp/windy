@@ -20,6 +20,7 @@ assert.deepEqual(classifyPrefixKey("n", key({ key: "d" })), { type: "mkdir" });
 assert.deepEqual(classifyPrefixKey("n", key({ key: "f" })), { type: "createFile" });
 assert.deepEqual(classifyPrefixKey(",", key({ key: "x" })), { type: "openCommandDialog" });
 assert.deepEqual(classifyPrefixKey(",", key({ key: "d" })), { type: "openPaneDiff" });
+assert.deepEqual(classifyPrefixKey(",", key({ key: "c" })), { type: "openDetailedPaneDiff" });
 assert.deepEqual(classifyPrefixKey(",", key({ key: "g" })), { type: "openGitStatus" });
 assert.deepEqual(classifyPrefixKey(",", key({ key: "p" })), { type: "createArchive" });
 assert.deepEqual(classifyPrefixKey("y", key({ key: "y" })), { type: "copySelectedPaths" });
@@ -34,6 +35,7 @@ assert.deepEqual(classifyPaneKey(key({ key: "x", ctrlKey: true, shiftKey: true }
 });
 assert.deepEqual(classifyPaneKey(key({ key: "f", altKey: true }), baseContext), { type: "toggleTerminalFullscreen" });
 assert.deepEqual(classifyPaneKey(key({ key: "f", ctrlKey: true }), baseContext), { type: "openSearchDialog" });
+assert.deepEqual(classifyPaneKey(key({ key: "/" }), baseContext), { type: "startQuickFilter" });
 assert.deepEqual(classifyPaneKey(key({ key: "Tab", shiftKey: true }), baseContext), {
   type: "focusOtherByTab",
   reverse: true,

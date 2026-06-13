@@ -36,6 +36,7 @@ const commandLabels: Record<string, string> = {
   "terminal.break": "Send break to terminal",
   "location.openManager": "Open Location Manager",
   "search.openDialog": "Open search",
+  "filter.startInline": "Start quick filter",
   "app.refresh": "Refresh active pane",
   "app.undo": "Undo last supported operation",
   "app.redo": "Redo last undone operation",
@@ -71,13 +72,14 @@ const commandLabels: Record<string, string> = {
   "cursor.pageDown": "Move cursor one page down",
 };
 
-const groupOrder = ["pane", "entry", "file", "view", "diff", "git", "clipboard", "terminal", "location", "search", "external", "dialog", "app", "archive", "selection", "cursor"];
+const groupOrder = ["pane", "entry", "file", "view", "filter", "diff", "git", "clipboard", "terminal", "location", "search", "external", "dialog", "app", "archive", "selection", "cursor"];
 
 const groupTitles: Record<string, string> = {
   pane: "Pane",
   entry: "Entry",
   file: "File",
   view: "View",
+  filter: "Filter",
   diff: "Diff",
   git: "Git",
   clipboard: "Clipboard",

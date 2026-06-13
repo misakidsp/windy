@@ -921,6 +921,8 @@
       previewRedoOperation();
     } else if (action.type === "openSearchDialog") {
       openSearchDialog();
+    } else if (action.type === "startQuickFilter") {
+      enterQuickFilterInput(activePaneId);
     } else if (action.type === "focusConsole") {
       focusConsole();
     } else if (action.type === "focusOtherByTab") {

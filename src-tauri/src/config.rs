@@ -485,6 +485,7 @@ fn default_editable_keybindings() -> BTreeMap<String, Vec<String>> {
             vec!["ctrl+n".to_string()],
         ),
         ("search.openDialog".to_string(), vec!["ctrl+f".to_string()]),
+        ("filter.startInline".to_string(), vec!["/".to_string()]),
         ("app.refresh".to_string(), vec!["ctrl+r".to_string()]),
         ("app.undo".to_string(), vec!["ctrl+z".to_string()]),
         ("app.redo".to_string(), vec!["ctrl+shift+z".to_string()]),
@@ -512,6 +513,11 @@ fn default_editable_keybindings() -> BTreeMap<String, Vec<String>> {
             vec![":".to_string(), ", x".to_string()],
         ),
         ("diff.openPaneDiff".to_string(), vec![", d".to_string()]),
+        (
+            "diff.openDetailedPaneDiff".to_string(),
+            vec![", c".to_string()],
+        ),
+        ("git.openStatus".to_string(), vec![", g".to_string()]),
         ("clipboard.copyPaths".to_string(), vec!["y y".to_string()]),
         (
             "clipboard.copyCurrentDirectory".to_string(),

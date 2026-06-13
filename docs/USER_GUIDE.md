@@ -73,12 +73,23 @@ Inside an archive, `c` extracts selected entries to the opposite local pane.
 | Key | Action |
 | --- | --- |
 | `/` | Quick filter in the current pane |
-| `f` | Open detailed local search |
+| `ctrl+f` | Open detailed local search |
 | `s` | Change sorting |
 | `.` | Toggle hidden files |
 
 Detailed search creates a search result pane. Search result entries can be
 opened or copied like regular local entries where supported.
+
+## Diff And Git
+
+| Key | Action |
+| --- | --- |
+| `, d` | Compare the current left and right pane entries |
+| `, c` | Compare local panes recursively with MD5 |
+| `, g` | Open Git changed files for the current local pane |
+
+Git status creates a source pane containing changed files. Diff sources are
+read-only comparison views.
 
 ## Location Manager
 

@@ -22,6 +22,7 @@ export type PaneKeyAction =
   | { type: "toggleTerminalFullscreen" }
   | { type: "toggleConsoleVisibility" }
   | { type: "openSearchDialog" }
+  | { type: "startQuickFilter" }
   | { type: "undoLastOperation" }
   | { type: "redoLastOperation" }
   | { type: "focusConsole" }
@@ -78,6 +79,7 @@ export const defaultKeybindSettings: KeybindSettings = {
     "terminal.insertActiveSelection": ["ctrl+shift+y"],
     "location.openManager": ["ctrl+n"],
     "search.openDialog": ["ctrl+f"],
+    "filter.startInline": ["/"],
     "app.refresh": ["ctrl+r"],
     "app.undo": ["ctrl+z"],
     "app.redo": ["ctrl+shift+z"],
@@ -125,6 +127,7 @@ const commandActions: Record<string, PaneKeyAction | ((event: KeyLike) => PaneKe
   "terminal.toggleFullscreen": { type: "toggleTerminalFullscreen" },
   "terminal.toggleVisible": { type: "toggleConsoleVisibility" },
   "search.openDialog": { type: "openSearchDialog" },
+  "filter.startInline": { type: "startQuickFilter" },
   "app.undo": { type: "undoLastOperation" },
   "app.redo": { type: "redoLastOperation" },
   "pane.focusTerminal": { type: "focusConsole" },

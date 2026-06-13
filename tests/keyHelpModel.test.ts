@@ -18,11 +18,13 @@ const settings: KeybindSettings = {
 const groups = keyHelpGroups(settings);
 const pane = groups.find((group) => group.id === "pane");
 const clipboard = groups.find((group) => group.id === "clipboard");
+const filter = groups.find((group) => group.id === "filter");
 const dialog = groups.find((group) => group.id === "dialog");
 const cursor = groups.find((group) => group.id === "cursor");
 
 assert.deepEqual(pane?.items.find((item) => item.commandId === "pane.focusTerminal")?.keys, ["z"]);
 assert.deepEqual(clipboard?.items.find((item) => item.commandId === "clipboard.copyPaths")?.keys, ["y y"]);
+assert.deepEqual(filter?.items.find((item) => item.commandId === "filter.startInline")?.keys, ["/"]);
 assert.equal(dialog?.items.find((item) => item.commandId === "dialog.confirm")?.locked, true);
 assert.deepEqual(cursor?.items.map((item) => item.commandId).sort(), [
   "cursor.goFirst",
