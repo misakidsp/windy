@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { executeFileOperationJob } from "../src/routes/operationSideEffects";
-import type { TauriInvoke } from "../src/routes/locationSideEffects";
 import type { FileOperationJob } from "../src/routes/types";
+import { createTauriInvokeMock, type InvokeCall } from "./tauriInvokeMock";
 
 const job: FileOperationJob = {
   id: "job-1",
@@ -22,11 +22,11 @@ const job: FileOperationJob = {
   createdAt: "2026-05-23T00:00:00.000Z",
 };
 
-const calls: { command: string; args?: Record<string, unknown> }[] = [];
-const invoke: TauriInvoke = async (command, args) => {
-  calls.push({ command, args });
-  return { succeeded: [{ path: "/tmp/a.txt", message: "copied" }], failed: [] } as never;
-};
+const calls: InvokeCall[] = [];
+const invoke = createTauriInvokeMock(calls, () => ({
+  succeeded: [{ path: "/tmp/a.txt", message: "copied" }],
+  failed: [],
+}));
 
 async function run(): Promise<void> {
   const result = await executeFileOperationJob(invoke, job);

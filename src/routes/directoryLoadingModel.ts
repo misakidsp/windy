@@ -18,13 +18,30 @@ export function isStaleLoad(generations: Record<PaneId, number>, paneId: PaneId,
   return generation !== generations[paneId];
 }
 
-export function loadedEntriesPatch(source: PaneSource, currentPath: string, entries: FileEntry[]): Partial<PaneState> {
+function cursorKeyMatches(entry: FileEntry, preferredCursorKey: string): boolean {
+  const normalizedPreferred = preferredCursorKey.replace(/[\\/]+$/, "");
+  return [entry.key, entry.path].some((value) => (
+    value === preferredCursorKey || value.replace(/[\\/]+$/, "") === normalizedPreferred
+  ));
+}
+
+export function loadedEntriesPatch(
+  source: PaneSource,
+  currentPath: string,
+  entries: FileEntry[],
+  preferredCursorKey: string | null = null,
+  cursorEntries: FileEntry[] = entries,
+): Partial<PaneState> {
+  const preferredIndex = preferredCursorKey
+    ? cursorEntries.findIndex((entry) => cursorKeyMatches(entry, preferredCursorKey))
+    : -1;
+  const cursorIndex = preferredIndex >= 0 ? preferredIndex : cursorEntries.length > 0 ? 0 : -1;
   return {
     source,
     currentPath,
     entries,
-    cursorKey: entries[0]?.key ?? null,
-    cursorIndex: entries.length > 0 ? 0 : -1,
+    cursorKey: cursorIndex >= 0 ? cursorEntries[cursorIndex].key : null,
+    cursorIndex,
     selectedKeys: new Set(),
     quickFilterQuery: "",
     quickFilterInputActive: false,

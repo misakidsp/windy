@@ -15,7 +15,7 @@ use std::{
     collections::HashMap,
     fs,
     fs::OpenOptions,
-    io,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -23,6 +23,9 @@ use std::{
     },
 };
 use tauri::State;
+
+const OPERATION_CANCELED_MESSAGE: &str = "Operation canceled.";
+const COPY_BUFFER_SIZE: usize = 1024 * 1024;
 
 #[derive(Default)]
 pub(crate) struct OperationCancellationState {
@@ -187,6 +190,47 @@ fn cancellation_requested(
     }
 }
 
+fn cancellation_error(cancellation: &Arc<AtomicBool>) -> Result<(), String> {
+    if cancellation.load(Ordering::SeqCst) {
+        Err(OPERATION_CANCELED_MESSAGE.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn mark_canceled_if_needed(message: &str, result: &mut FileOperationResult) -> bool {
+    if message == OPERATION_CANCELED_MESSAGE {
+        result.canceled = true;
+        true
+    } else {
+        false
+    }
+}
+
+fn copy_stream_with_cancellation<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    cancellation: &Arc<AtomicBool>,
+) -> Result<u64, String> {
+    let mut buffer = vec![0; COPY_BUFFER_SIZE];
+    let mut total = 0;
+    loop {
+        cancellation_error(cancellation)?;
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Read copy stream failed: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        cancellation_error(cancellation)?;
+        writer
+            .write_all(&buffer[..read])
+            .map_err(|error| format!("Write copy stream failed: {error}"))?;
+        total += read as u64;
+    }
+    Ok(total)
+}
+
 pub(crate) fn execute_file_operation_job_blocking_with_cancellation(
     job: FileOperationJob,
     cancellation: Arc<AtomicBool>,
@@ -316,7 +360,7 @@ fn copy_targets(
             } else {
                 let source = PathBuf::from(&target.path);
                 target_destination(&destination_dir, &source)
-                    .and_then(|destination| copy_entry(&source, &destination))
+                    .and_then(|destination| copy_entry(&source, &destination, cancellation))
             };
 
         match operation {
@@ -324,10 +368,15 @@ fn copy_targets(
                 path: target.path.clone(),
                 message: format!("Copied to '{}'.", destination.display()),
             }),
-            Err(message) => result.failed.push(FileOperationResultItem {
-                path: target.path.clone(),
-                message,
-            }),
+            Err(message) => {
+                if mark_canceled_if_needed(&message, result) {
+                    break;
+                }
+                result.failed.push(FileOperationResultItem {
+                    path: target.path.clone(),
+                    message,
+                });
+            }
         }
     }
 }
@@ -465,15 +514,21 @@ fn copy_sftp_targets_to_local(
             &remote_path,
             &destination,
             job.sftp_safe_transfer_part_threshold_bytes,
+            cancellation,
         ) {
             Ok(()) => result.succeeded.push(FileOperationResultItem {
                 path: target.path.clone(),
                 message: format!("Downloaded to '{}'.", destination.display()),
             }),
-            Err(message) => result.failed.push(FileOperationResultItem {
-                path: target.path.clone(),
-                message,
-            }),
+            Err(message) => {
+                if mark_canceled_if_needed(&message, result) {
+                    break;
+                }
+                result.failed.push(FileOperationResultItem {
+                    path: target.path.clone(),
+                    message,
+                });
+            }
         }
     }
 }
@@ -535,15 +590,21 @@ fn copy_local_targets_to_sftp(
             &source,
             &remote_destination,
             job.sftp_safe_transfer_part_threshold_bytes,
+            cancellation,
         ) {
             Ok(()) => result.succeeded.push(FileOperationResultItem {
                 path: target.path.clone(),
                 message: format!("Uploaded to '{}'.", remote_destination),
             }),
-            Err(message) => result.failed.push(FileOperationResultItem {
-                path: target.path.clone(),
-                message,
-            }),
+            Err(message) => {
+                if mark_canceled_if_needed(&message, result) {
+                    break;
+                }
+                result.failed.push(FileOperationResultItem {
+                    path: target.path.clone(),
+                    message,
+                });
+            }
         }
     }
 }
@@ -553,7 +614,9 @@ fn download_sftp_entry(
     remote_path: &str,
     destination: &Path,
     part_threshold_bytes: Option<u64>,
+    cancellation: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    cancellation_error(cancellation)?;
     let stat = sftp
         .stat(Path::new(remote_path))
         .map_err(|error| format!("Read SFTP metadata failed for '{remote_path}': {error}"))?;
@@ -564,18 +627,25 @@ fn download_sftp_entry(
             .readdir(Path::new(remote_path))
             .map_err(|error| format!("Read SFTP directory failed for '{remote_path}': {error}"))?;
         for (entry_path, _) in entries {
+            cancellation_error(cancellation)?;
             let Some(name) = entry_path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
             if name == "." || name == ".." {
                 continue;
             }
-            download_sftp_entry(
+            if let Err(error) = download_sftp_entry(
                 sftp,
                 &join_sftp_remote_path(remote_path, name),
                 &destination.join(name),
                 part_threshold_bytes,
-            )?;
+                cancellation,
+            ) {
+                if error == OPERATION_CANCELED_MESSAGE {
+                    let _ = fs::remove_dir_all(destination);
+                }
+                return Err(error);
+            }
         }
         return Ok(());
     }
@@ -598,8 +668,19 @@ fn download_sftp_entry(
         .create_new(true)
         .open(&write_destination)
         .map_err(|error| format_io_error("create downloaded file", &write_destination, error))?;
-    io::copy(&mut remote_file, &mut local_file)
-        .map_err(|error| format_io_error("write downloaded file", &write_destination, error))?;
+    if let Err(error) =
+        copy_stream_with_cancellation(&mut remote_file, &mut local_file, cancellation)
+    {
+        if error == OPERATION_CANCELED_MESSAGE {
+            let _ = fs::remove_file(&write_destination);
+            return Err(error);
+        }
+        return Err(transfer_error(
+            "write downloaded file",
+            &write_destination,
+            error,
+        ));
+    }
     if use_part_file {
         fs::rename(&write_destination, destination).map_err(|error| {
             format_io_error("finish downloaded part file", &write_destination, error)
@@ -613,7 +694,9 @@ fn upload_local_entry_to_sftp(
     source: &Path,
     remote_path: &str,
     part_threshold_bytes: Option<u64>,
+    cancellation: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    cancellation_error(cancellation)?;
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format_io_error("read metadata", source, error))?;
     if metadata.file_type().is_symlink() {
@@ -624,6 +707,7 @@ fn upload_local_entry_to_sftp(
         for entry in fs::read_dir(source)
             .map_err(|error| format_io_error("read directory", source, error))?
         {
+            cancellation_error(cancellation)?;
             let entry =
                 entry.map_err(|error| format_io_error("read directory entry", source, error))?;
             let name = entry.file_name().to_string_lossy().to_string();
@@ -632,6 +716,7 @@ fn upload_local_entry_to_sftp(
                 &entry.path(),
                 &join_sftp_remote_path(remote_path, &name),
                 part_threshold_bytes,
+                cancellation,
             )?;
         }
         return Ok(());
@@ -667,8 +752,17 @@ fn upload_local_entry_to_sftp(
             OpenType::File,
         )
         .map_err(|error| format!("Create SFTP file failed for '{write_remote_path}': {error}"))?;
-    io::copy(&mut local_file, &mut remote_file)
-        .map_err(|error| format!("Write SFTP file failed for '{write_remote_path}': {error}"))?;
+    if let Err(error) =
+        copy_stream_with_cancellation(&mut local_file, &mut remote_file, cancellation)
+    {
+        if error == OPERATION_CANCELED_MESSAGE {
+            let _ = sftp.unlink(Path::new(&write_remote_path));
+            return Err(error);
+        }
+        return Err(format!(
+            "Write SFTP file failed for '{write_remote_path}': {error}"
+        ));
+    }
     drop(remote_file);
     if use_part_file {
         sftp.rename(Path::new(&write_remote_path), Path::new(remote_path), None)
@@ -1827,7 +1921,12 @@ fn create_archive(
     }
 }
 
-fn copy_entry(source: &Path, destination: &Path) -> Result<PathBuf, String> {
+fn copy_entry(
+    source: &Path,
+    destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+) -> Result<PathBuf, String> {
+    cancellation_error(cancellation)?;
     if destination.exists() {
         return Err(format!(
             "Destination already exists: '{}'",
@@ -1844,21 +1943,32 @@ fn copy_entry(source: &Path, destination: &Path) -> Result<PathBuf, String> {
     {
         copy_symlink(source, destination)?;
     } else if source.is_dir() {
-        copy_directory(source, destination)?;
+        if let Err(error) = copy_directory(source, destination, cancellation) {
+            if error == OPERATION_CANCELED_MESSAGE {
+                let _ = fs::remove_dir_all(destination);
+            }
+            return Err(error);
+        }
     } else {
-        fs::copy(source, destination).map_err(|error| format_io_error("copy", source, error))?;
+        copy_file_with_cancellation(source, destination, cancellation)?;
     }
 
     Ok(destination.to_path_buf())
 }
 
-fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+fn copy_directory(
+    source: &Path,
+    destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    cancellation_error(cancellation)?;
     fs::create_dir(destination)
         .map_err(|error| format_io_error("create directory", destination, error))?;
 
     for entry in
         fs::read_dir(source).map_err(|error| format_io_error("read directory", source, error))?
     {
+        cancellation_error(cancellation)?;
         let entry = entry.map_err(|error| format!("Failed to read directory entry: {error}"))?;
         let entry_source = entry.path();
         let entry_destination = destination.join(entry.file_name());
@@ -1869,14 +1979,43 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
         {
             copy_symlink(&entry_source, &entry_destination)?;
         } else if entry_source.is_dir() {
-            copy_directory(&entry_source, &entry_destination)?;
+            copy_directory(&entry_source, &entry_destination, cancellation)?;
         } else {
-            fs::copy(&entry_source, &entry_destination)
-                .map_err(|error| format_io_error("copy", &entry_source, error))?;
+            copy_file_with_cancellation(&entry_source, &entry_destination, cancellation)?;
         }
     }
 
     Ok(())
+}
+
+fn copy_file_with_cancellation(
+    source: &Path,
+    destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut input = fs::File::open(source)
+        .map_err(|error| format_io_error("open copy source", source, error))?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|error| format_io_error("create copy destination", destination, error))?;
+    if let Err(error) = copy_stream_with_cancellation(&mut input, &mut output, cancellation) {
+        if error == OPERATION_CANCELED_MESSAGE {
+            let _ = fs::remove_file(destination);
+            return Err(error);
+        }
+        return Err(transfer_error("copy", source, error));
+    }
+    Ok(())
+}
+
+fn transfer_error(operation: &str, path: &Path, error: String) -> String {
+    if error == OPERATION_CANCELED_MESSAGE {
+        error
+    } else {
+        format_io_error(operation, path, io::Error::other(error))
+    }
 }
 
 #[cfg(unix)]
@@ -1963,5 +2102,42 @@ fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
         }
 
         current = current.parent()?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CancelAfterFirstRead {
+        cancellation: Arc<AtomicBool>,
+        reads: usize,
+    }
+
+    impl Read for CancelAfterFirstRead {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.reads > 0 {
+                return Ok(0);
+            }
+            self.reads += 1;
+            buffer[..4].copy_from_slice(b"wind");
+            self.cancellation.store(true, Ordering::SeqCst);
+            Ok(4)
+        }
+    }
+
+    #[test]
+    fn copy_stream_checks_cancellation_between_chunks() {
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let mut reader = CancelAfterFirstRead {
+            cancellation: Arc::clone(&cancellation),
+            reads: 0,
+        };
+        let mut output = Vec::new();
+
+        let result = copy_stream_with_cancellation(&mut reader, &mut output, &cancellation);
+
+        assert_eq!(result, Err(OPERATION_CANCELED_MESSAGE.to_string()));
+        assert!(output.is_empty());
     }
 }

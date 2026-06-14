@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifyPaneKey, classifyPrefixKey, type KeyLike } from "../src/routes/keyboardModel";
+import { classifyPaneKey, classifyPrefixKey, defaultKeybindSettings, type KeyLike } from "../src/routes/keyboardModel";
 
 function key(partial: Partial<KeyLike> & Pick<KeyLike, "key">): KeyLike {
   return {
@@ -36,6 +36,7 @@ assert.deepEqual(classifyPaneKey(key({ key: "x", ctrlKey: true, shiftKey: true }
 assert.deepEqual(classifyPaneKey(key({ key: "f", altKey: true }), baseContext), { type: "toggleTerminalFullscreen" });
 assert.deepEqual(classifyPaneKey(key({ key: "f", ctrlKey: true }), baseContext), { type: "openSearchDialog" });
 assert.deepEqual(classifyPaneKey(key({ key: "/" }), baseContext), { type: "startQuickFilter" });
+assert.deepEqual(classifyPaneKey(key({ key: "?" }), baseContext), { type: "toggleKeyHelp" });
 assert.deepEqual(classifyPaneKey(key({ key: "Tab", shiftKey: true }), baseContext), {
   type: "focusOtherByTab",
   reverse: true,
@@ -58,6 +59,8 @@ assert.deepEqual(classifyPaneKey(key({ key: "h" }), baseContext), { type: "horiz
 assert.deepEqual(classifyPaneKey(key({ key: "Enter", shiftKey: true }), baseContext), {
   type: "openFocusedWithDefaultApp",
 });
+assert.deepEqual(classifyPaneKey(key({ key: "Home" }), baseContext), { type: "goFirst" });
+assert.deepEqual(classifyPaneKey(key({ key: "End" }), baseContext), { type: "goLast" });
 assert.deepEqual(classifyPaneKey(key({ key: "a", ctrlKey: true }), baseContext), { type: "selectAllVisible" });
 assert.deepEqual(classifyPaneKey(key({ key: "r", ctrlKey: true }), baseContext), { type: "refreshActivePane" });
 assert.deepEqual(classifyPaneKey(key({ key: "z", ctrlKey: true }), baseContext), { type: "undoLastOperation" });
@@ -71,4 +74,22 @@ assert.deepEqual(classifyPaneKey(key({ key: "Delete", shiftKey: true }), baseCon
   permanent: true,
 });
 assert.deepEqual(classifyPaneKey(key({ key: "c" }), baseContext), { type: "operation", kind: "copy" });
+assert.deepEqual(classifyPaneKey(key({ key: "e" }), baseContext), { type: "editFocused" });
 assert.equal(classifyPaneKey(key({ key: "C", shiftKey: true }), baseContext), null);
+
+const remappedSettings = {
+  ...defaultKeybindSettings,
+  bindings: {
+    ...defaultKeybindSettings.bindings,
+    "help.toggle": ["f1"],
+    "file.deletePermanently": ["ctrl+delete"],
+  },
+};
+
+assert.equal(classifyPaneKey(key({ key: "?" }), baseContext, remappedSettings), null);
+assert.deepEqual(classifyPaneKey(key({ key: "F1" }), baseContext, remappedSettings), { type: "toggleKeyHelp" });
+assert.equal(classifyPaneKey(key({ key: "Delete", shiftKey: true }), baseContext, remappedSettings), null);
+assert.deepEqual(classifyPaneKey(key({ key: "Delete", ctrlKey: true }), baseContext, remappedSettings), {
+  type: "delete",
+  permanent: true,
+});

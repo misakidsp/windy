@@ -1,7 +1,14 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import type { KeyHelpGroup } from "./keyHelpModel";
 
   export let groups: KeyHelpGroup[] = [];
+
+  let scrollContainer: HTMLDivElement | null = null;
+
+  onMount(() => {
+    scrollContainer?.focus({ preventScroll: true });
+  });
 </script>
 
 <div class="key-help-backdrop" aria-label="Key help">
@@ -11,10 +18,10 @@
         <span class="eyebrow">Key Help</span>
         <h2>Current bindings</h2>
       </div>
-      <span class="hint">hold ?</span>
+      <span class="hint">? / Esc closes</span>
     </header>
 
-    <div class="group-grid">
+    <div bind:this={scrollContainer} aria-label="Current key bindings" class="group-grid" role="region" tabindex="-1">
       {#each groups as group}
         <section class="help-group">
           <h3>{group.title}</h3>

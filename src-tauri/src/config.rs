@@ -5,8 +5,10 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    time::UNIX_EPOCH,
+    time::{SystemTime, UNIX_EPOCH},
 };
+
+const DEFAULT_KEYBINDINGS_JSON: &str = include_str!("../../src/routes/keybindingDefaults.json");
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,6 +19,8 @@ pub(crate) struct AppSettings {
     pub(crate) operation_result: OperationResultSettings,
     #[serde(default)]
     pub(crate) operation_cancel: OperationCancelSettings,
+    #[serde(default)]
+    pub(crate) external_editor: ExternalEditorSettings,
     #[serde(default)]
     pub(crate) sftp_session: SftpSessionSettings,
     #[serde(default)]
@@ -32,6 +36,8 @@ pub(crate) struct OperationSettings {
     pub(crate) operation_result: OperationResultSettings,
     #[serde(default)]
     pub(crate) operation_cancel: OperationCancelSettings,
+    #[serde(default)]
+    pub(crate) external_editor: ExternalEditorSettings,
 }
 
 impl Default for OperationSettings {
@@ -40,26 +46,18 @@ impl Default for OperationSettings {
             use_trash: default_use_trash(),
             operation_result: OperationResultSettings::default(),
             operation_cancel: OperationCancelSettings::default(),
+            external_editor: ExternalEditorSettings::default(),
         }
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SftpSettings {
     #[serde(default)]
     pub(crate) sftp_session: SftpSessionSettings,
     #[serde(default)]
     pub(crate) sftp_transfer: SftpTransferSettings,
-}
-
-impl Default for SftpSettings {
-    fn default() -> Self {
-        Self {
-            sftp_session: SftpSessionSettings::default(),
-            sftp_transfer: SftpTransferSettings::default(),
-        }
-    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -69,6 +67,8 @@ pub(crate) struct AppearanceSettings {
     pub(crate) schema_version: u32,
     #[serde(default)]
     pub(crate) fonts: AppearanceFontSettings,
+    #[serde(default)]
+    pub(crate) layout: AppearanceLayoutSettings,
     #[serde(default = "default_appearance_colors")]
     pub(crate) colors: BTreeMap<String, String>,
     #[serde(default = "default_extension_colors")]
@@ -80,6 +80,7 @@ impl Default for AppearanceSettings {
         Self {
             schema_version: default_settings_schema_version(),
             fonts: AppearanceFontSettings::default(),
+            layout: AppearanceLayoutSettings::default(),
             colors: default_appearance_colors(),
             extension_colors: default_extension_colors(),
         }
@@ -115,6 +116,21 @@ impl Default for AppearanceFontSettings {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct AppearanceLayoutSettings {
+    #[serde(default = "default_file_row_height")]
+    pub(crate) file_row_height: u16,
+}
+
+impl Default for AppearanceLayoutSettings {
+    fn default() -> Self {
+        Self {
+            file_row_height: default_file_row_height(),
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct KeybindSettings {
     #[serde(default = "default_settings_schema_version")]
     pub(crate) schema_version: u32,
@@ -126,11 +142,7 @@ pub(crate) struct KeybindSettings {
 
 impl Default for KeybindSettings {
     fn default() -> Self {
-        Self {
-            schema_version: default_settings_schema_version(),
-            bindings: default_editable_keybindings(),
-            locked_bindings: default_locked_keybindings(),
-        }
+        default_keybind_settings_from_json()
     }
 }
 
@@ -143,6 +155,22 @@ pub(crate) struct LanguageSettings {
     pub(crate) locale: String,
     #[serde(default = "default_language_messages")]
     pub(crate) messages: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanguagePresetInfo {
+    pub(crate) locale: String,
+    pub(crate) name: String,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExternalEditorSettings {
+    #[serde(default)]
+    pub(crate) command: String,
+    #[serde(default)]
+    pub(crate) args: Vec<String>,
 }
 
 impl Default for LanguageSettings {
@@ -203,6 +231,7 @@ impl Default for AppSettings {
             use_trash: default_use_trash(),
             operation_result: OperationResultSettings::default(),
             operation_cancel: OperationCancelSettings::default(),
+            external_editor: ExternalEditorSettings::default(),
             sftp_session: SftpSessionSettings::default(),
             sftp_transfer: SftpTransferSettings::default(),
         }
@@ -332,6 +361,10 @@ fn default_viewer_font_size() -> u16 {
     12
 }
 
+fn default_file_row_height() -> u16 {
+    20
+}
+
 fn default_language_locale() -> String {
     "en".to_string()
 }
@@ -443,120 +476,31 @@ fn default_extension_colors() -> BTreeMap<String, String> {
     ])
 }
 
+fn keybind_settings_from_json(json: &str) -> serde_json::Result<KeybindSettings> {
+    serde_json::from_str(json)
+}
+
+fn empty_keybind_settings_fallback() -> KeybindSettings {
+    KeybindSettings {
+        schema_version: default_settings_schema_version(),
+        bindings: BTreeMap::new(),
+        locked_bindings: BTreeMap::new(),
+    }
+}
+
+fn default_keybind_settings_from_json() -> KeybindSettings {
+    keybind_settings_from_json(DEFAULT_KEYBINDINGS_JSON).unwrap_or_else(|error| {
+        eprintln!("default keybinding JSON is invalid: {error}");
+        empty_keybind_settings_fallback()
+    })
+}
+
 fn default_editable_keybindings() -> BTreeMap<String, Vec<String>> {
-    BTreeMap::from([
-        ("pane.moveUpAlternative".to_string(), vec!["k".to_string()]),
-        (
-            "pane.moveDownAlternative".to_string(),
-            vec!["j".to_string()],
-        ),
-        ("pane.leftAlternative".to_string(), vec!["h".to_string()]),
-        ("pane.rightAlternative".to_string(), vec!["l".to_string()]),
-        ("pane.focusTerminal".to_string(), vec!["x".to_string()]),
-        ("pane.goRoot".to_string(), vec!["\\".to_string()]),
-        ("pane.goHome".to_string(), vec!["~".to_string()]),
-        ("pane.openOtherPathHere".to_string(), vec!["-".to_string()]),
-        (
-            "pane.openCurrentPathInOther".to_string(),
-            vec!["=".to_string()],
-        ),
-        (
-            "terminal.focusPreviousPane".to_string(),
-            vec!["ctrl+x".to_string()],
-        ),
-        (
-            "terminal.toggleVisible".to_string(),
-            vec!["ctrl+shift+x".to_string()],
-        ),
-        (
-            "terminal.toggleFullscreen".to_string(),
-            vec!["alt+f".to_string()],
-        ),
-        (
-            "terminal.copyMode".to_string(),
-            vec!["ctrl+shift+c".to_string()],
-        ),
-        (
-            "terminal.insertActiveSelection".to_string(),
-            vec!["ctrl+shift+y".to_string()],
-        ),
-        (
-            "location.openManager".to_string(),
-            vec!["ctrl+n".to_string()],
-        ),
-        ("search.openDialog".to_string(), vec!["ctrl+f".to_string()]),
-        ("filter.startInline".to_string(), vec!["/".to_string()]),
-        ("app.refresh".to_string(), vec!["ctrl+r".to_string()]),
-        ("app.undo".to_string(), vec!["ctrl+z".to_string()]),
-        ("app.redo".to_string(), vec!["ctrl+shift+z".to_string()]),
-        (
-            "selection.selectAll".to_string(),
-            vec!["ctrl+a".to_string()],
-        ),
-        ("file.copy".to_string(), vec!["c".to_string()]),
-        ("file.move".to_string(), vec!["m".to_string()]),
-        ("file.rename".to_string(), vec!["r".to_string()]),
-        (
-            "file.delete".to_string(),
-            vec!["d".to_string(), "delete".to_string()],
-        ),
-        ("file.mkdir".to_string(), vec!["n d".to_string()]),
-        ("file.createFile".to_string(), vec!["n f".to_string()]),
-        ("file.properties".to_string(), vec!["p".to_string()]),
-        ("file.chmod".to_string(), vec!["a".to_string()]),
-        ("archive.unpack".to_string(), vec!["u".to_string()]),
-        ("archive.create".to_string(), vec![", p".to_string()]),
-        ("view.cycleSort".to_string(), vec!["s".to_string()]),
-        ("view.toggleHidden".to_string(), vec![".".to_string()]),
-        (
-            "externalCommand.open".to_string(),
-            vec![":".to_string(), ", x".to_string()],
-        ),
-        ("diff.openPaneDiff".to_string(), vec![", d".to_string()]),
-        (
-            "diff.openDetailedPaneDiff".to_string(),
-            vec![", c".to_string()],
-        ),
-        ("git.openStatus".to_string(), vec![", g".to_string()]),
-        ("clipboard.copyPaths".to_string(), vec!["y y".to_string()]),
-        (
-            "clipboard.copyCurrentDirectory".to_string(),
-            vec!["y p".to_string()],
-        ),
-        ("clipboard.copyNames".to_string(), vec!["y n".to_string()]),
-    ])
+    default_keybind_settings_from_json().bindings
 }
 
 fn default_locked_keybindings() -> BTreeMap<String, Vec<String>> {
-    BTreeMap::from([
-        ("pane.moveUp".to_string(), vec!["up".to_string()]),
-        ("pane.moveDown".to_string(), vec!["down".to_string()]),
-        ("pane.leftOrParent".to_string(), vec!["left".to_string()]),
-        ("pane.rightOrParent".to_string(), vec!["right".to_string()]),
-        ("cursor.pageUp".to_string(), vec!["pageup".to_string()]),
-        ("cursor.pageDown".to_string(), vec!["pagedown".to_string()]),
-        (
-            "cursor.goFirst".to_string(),
-            vec!["home".to_string(), "g g".to_string()],
-        ),
-        (
-            "cursor.goLast".to_string(),
-            vec!["end".to_string(), "g e".to_string()],
-        ),
-        ("dialog.confirm".to_string(), vec!["enter".to_string()]),
-        ("dialog.cancel".to_string(), vec!["esc".to_string()]),
-        ("entry.open".to_string(), vec!["enter".to_string()]),
-        (
-            "entry.openDefaultApp".to_string(),
-            vec!["shift+enter".to_string()],
-        ),
-        ("entry.goParent".to_string(), vec!["backspace".to_string()]),
-        (
-            "selection.toggleFocused".to_string(),
-            vec!["space".to_string()],
-        ),
-        ("terminal.break".to_string(), vec!["ctrl+c".to_string()]),
-    ])
+    default_keybind_settings_from_json().locked_bindings
 }
 
 fn default_language_messages() -> BTreeMap<String, String> {
@@ -597,7 +541,7 @@ fn default_language_messages() -> BTreeMap<String, String> {
     ])
 }
 
-fn config_dir() -> Result<PathBuf, String> {
+pub(crate) fn config_dir() -> Result<PathBuf, String> {
     dirs::config_dir()
         .ok_or_else(|| "Config directory could not be resolved.".to_string())
         .map(|path| path.join("windy"))
@@ -625,8 +569,123 @@ pub(crate) fn load_keybind_settings() -> Result<KeybindSettings, String> {
     load_keybind_settings_from_path(&config_root.join("settings/keybind.json"))
 }
 
+pub(crate) fn load_language_settings() -> Result<LanguageSettings, String> {
+    let config_root = config_dir()?;
+    load_language_settings_from_path(&config_root.join("settings/language.json"))
+}
+
+pub(crate) fn save_language_settings(settings: &LanguageSettings) -> Result<(), String> {
+    let config_root = config_dir()?;
+    save_language_settings_to_path(&config_root.join("settings/language.json"), settings)
+}
+
+pub(crate) fn save_appearance_settings(settings: &AppearanceSettings) -> Result<(), String> {
+    let config_root = config_dir()?;
+    save_appearance_settings_to_path(&config_root.join("settings/appearance.json"), settings)
+}
+
+pub(crate) fn save_keybind_settings(settings: &KeybindSettings) -> Result<(), String> {
+    let config_root = config_dir()?;
+    save_keybind_settings_to_path(&config_root.join("settings/keybind.json"), settings)
+}
+
 pub(crate) fn save_app_settings(settings: &AppSettings) -> Result<(), String> {
     save_app_settings_to_dir(&config_dir()?, settings)
+}
+
+pub(crate) fn backup_existing_settings_files(label: &str) -> Result<Vec<PathBuf>, String> {
+    backup_settings_files_from_dir(&config_dir()?, label)
+}
+
+pub(crate) fn reset_all_settings_to_defaults() -> Result<(), String> {
+    let config_root = config_dir()?;
+    reset_all_settings_to_defaults_in_dir(&config_root)
+}
+
+pub(crate) fn backup_settings_files_from_dir(
+    config_root: &Path,
+    label: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let backup_root = config_root
+        .join("backups")
+        .join(format!("{label}-{timestamp}"));
+    let candidates = [
+        config_root.join("settings.json"),
+        config_root.join("settings/operation.json"),
+        config_root.join("settings/sftp.json"),
+        config_root.join("settings/appearance.json"),
+        config_root.join("settings/keybind.json"),
+        config_root.join("settings/language.json"),
+        config_root.join("commands.json"),
+        config_root.join("locations.json"),
+    ];
+    let mut backups = Vec::new();
+    for path in candidates {
+        if !path.exists() {
+            continue;
+        }
+        let relative = path.strip_prefix(config_root).unwrap_or(path.as_path());
+        let destination = backup_root.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format_io_error("create settings backup directory", parent, error)
+            })?;
+        }
+        fs::copy(&path, &destination)
+            .map_err(|error| format_io_error("backup settings file", &path, error))?;
+        backups.push(destination);
+    }
+    Ok(backups)
+}
+
+pub(crate) fn reset_all_settings_to_defaults_in_dir(config_root: &Path) -> Result<(), String> {
+    save_app_settings_to_dir(config_root, &AppSettings::default())?;
+    save_appearance_settings_to_path(
+        &config_root.join("settings/appearance.json"),
+        &AppearanceSettings::default(),
+    )?;
+    save_keybind_settings_to_path(
+        &config_root.join("settings/keybind.json"),
+        &KeybindSettings::default(),
+    )?;
+    save_language_settings_to_path(
+        &config_root.join("settings/language.json"),
+        &LanguageSettings::default(),
+    )
+}
+
+pub(crate) fn language_presets() -> Vec<LanguagePresetInfo> {
+    vec![
+        LanguagePresetInfo {
+            locale: default_language_locale(),
+            name: "English".to_string(),
+        },
+        LanguagePresetInfo {
+            locale: "ja".to_string(),
+            name: "Japanese".to_string(),
+        },
+        LanguagePresetInfo {
+            locale: "qya-Latn".to_string(),
+            name: "Quenya Latin".to_string(),
+        },
+    ]
+}
+
+pub(crate) fn language_preset_settings(locale: &str) -> Result<LanguageSettings, String> {
+    match locale {
+        "en" => Ok(LanguageSettings::default()),
+        "ja" => serde_json::from_str(include_str!("../../docs/examples/language.ja.json"))
+            .map_err(|error| format!("Parse Japanese language preset failed: {error}")),
+        "qya-Latn" => {
+            serde_json::from_str(include_str!("../../docs/examples/language.qya-Latn.json"))
+                .map_err(|error| format!("Parse Quenya language preset failed: {error}"))
+        }
+        _ => Err(format!("Unknown language preset: {locale}")),
+    }
 }
 
 pub(crate) fn save_operation_failure_log(
@@ -863,6 +922,7 @@ pub(crate) fn load_app_settings_from_dir(config_root: &Path) -> Result<AppSettin
         use_trash: operation.use_trash,
         operation_result: operation.operation_result,
         operation_cancel: operation.operation_cancel,
+        external_editor: operation.external_editor,
         sftp_session: sftp.sftp_session,
         sftp_transfer: sftp.sftp_transfer,
     })
@@ -879,6 +939,7 @@ pub(crate) fn save_app_settings_to_dir(
             use_trash: settings.use_trash,
             operation_result: settings.operation_result.clone(),
             operation_cancel: settings.operation_cancel.clone(),
+            external_editor: settings.external_editor.clone(),
         },
     )?;
     save_sftp_settings_to_path(
@@ -926,12 +987,62 @@ pub(crate) fn load_appearance_settings_from_path(
     load_json_settings_from_path(path, AppearanceSettings::default(), "appearance settings")
 }
 
+pub(crate) fn save_appearance_settings_to_path(
+    path: &Path,
+    settings: &AppearanceSettings,
+) -> Result<(), String> {
+    save_json_settings_to_path(path, settings, "appearance settings")
+}
+
 pub(crate) fn load_keybind_settings_from_path(path: &Path) -> Result<KeybindSettings, String> {
-    load_json_settings_from_path(path, KeybindSettings::default(), "keybind settings")
+    let mut settings =
+        load_json_settings_from_path(path, KeybindSettings::default(), "keybind settings")?;
+    if merge_missing_keybinding_defaults(&mut settings) {
+        save_json_settings_to_path(path, &settings, "keybind settings")?;
+    }
+    Ok(settings)
+}
+
+pub(crate) fn save_keybind_settings_to_path(
+    path: &Path,
+    settings: &KeybindSettings,
+) -> Result<(), String> {
+    let mut settings = settings.clone();
+    merge_missing_keybinding_defaults(&mut settings);
+    save_json_settings_to_path(path, &settings, "keybind settings")
+}
+
+fn merge_missing_keybinding_defaults(settings: &mut KeybindSettings) -> bool {
+    let defaults = KeybindSettings::default();
+    let mut changed = false;
+    for (command_id, keys) in defaults.bindings {
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            settings.bindings.entry(command_id)
+        {
+            entry.insert(keys);
+            changed = true;
+        }
+    }
+    for (command_id, keys) in defaults.locked_bindings {
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            settings.locked_bindings.entry(command_id)
+        {
+            entry.insert(keys);
+            changed = true;
+        }
+    }
+    changed
 }
 
 pub(crate) fn load_language_settings_from_path(path: &Path) -> Result<LanguageSettings, String> {
     load_json_settings_from_path(path, LanguageSettings::default(), "language settings")
+}
+
+pub(crate) fn save_language_settings_to_path(
+    path: &Path,
+    settings: &LanguageSettings,
+) -> Result<(), String> {
+    save_json_settings_to_path(path, settings, "language settings")
 }
 
 fn load_json_settings_from_path<T>(path: &Path, default_value: T, label: &str) -> Result<T, String>
@@ -1017,4 +1128,88 @@ fn format_io_error(action: &str, path: &Path, error: std::io::Error) -> String {
 
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    const JAPANESE_LANGUAGE_JSON: &str = include_str!("../../docs/examples/language.ja.json");
+    const QUENYA_LATIN_LANGUAGE_JSON: &str =
+        include_str!("../../docs/examples/language.qya-Latn.json");
+
+    #[test]
+    fn bundled_keybind_defaults_parse() {
+        let settings = default_keybind_settings_from_json();
+
+        assert!(settings.bindings.contains_key("file.copy"));
+        assert!(settings.locked_bindings.contains_key("terminal.break"));
+    }
+
+    #[test]
+    fn invalid_keybind_json_is_reported_as_parse_error() {
+        assert!(keybind_settings_from_json("{").is_err());
+    }
+
+    #[test]
+    fn language_presets_are_compatible_with_default_messages() {
+        assert_language_preset_compatibility("Japanese", "ja", JAPANESE_LANGUAGE_JSON);
+        assert_language_preset_compatibility(
+            "Quenya Latin",
+            "qya-Latn",
+            QUENYA_LATIN_LANGUAGE_JSON,
+        );
+    }
+
+    fn assert_language_preset_compatibility(name: &str, expected_locale: &str, json: &str) {
+        let preset: LanguageSettings = serde_json::from_str(json)
+            .unwrap_or_else(|error| panic!("parse {name} language preset: {error}"));
+        let defaults = default_language_messages();
+
+        assert_eq!(preset.schema_version, default_settings_schema_version());
+        assert_eq!(preset.locale, expected_locale);
+        assert_eq!(
+            message_keys(&preset.messages),
+            message_keys(&defaults),
+            "{name} preset must provide exactly the default message keys"
+        );
+
+        for (key, default_message) in defaults {
+            let translated = preset
+                .messages
+                .get(&key)
+                .unwrap_or_else(|| panic!("missing {name} message for {key}"));
+            assert_eq!(
+                placeholders(translated),
+                placeholders(&default_message),
+                "placeholder mismatch for {name} message {key}"
+            );
+        }
+    }
+
+    fn message_keys(messages: &BTreeMap<String, String>) -> BTreeSet<String> {
+        messages.keys().cloned().collect()
+    }
+
+    fn placeholders(message: &str) -> BTreeSet<String> {
+        let mut placeholders = BTreeSet::new();
+        let mut rest = message;
+        while let Some(open) = rest.find('{') {
+            let after_open = &rest[open + 1..];
+            let Some(close) = after_open.find('}') else {
+                break;
+            };
+            let name = &after_open[..close];
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
+                placeholders.insert(name.to_string());
+            }
+            rest = &after_open[close + 1..];
+        }
+        placeholders
+    }
 }

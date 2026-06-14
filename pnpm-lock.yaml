@@ -9,41 +9,41 @@ importers:
   .:
     dependencies:
       '@tauri-apps/api':
-        specifier: ^2
+        specifier: ~2.11.0
         version: 2.11.0
       '@xterm/addon-fit':
-        specifier: ^0.11.0
+        specifier: ~0.11.0
         version: 0.11.0
       '@xterm/xterm':
-        specifier: ^6.0.0
+        specifier: ~6.0.0
         version: 6.0.0
     devDependencies:
       '@sveltejs/adapter-static':
-        specifier: ^3.0.6
+        specifier: ~3.0.10
         version: 3.0.10(@sveltejs/kit@2.59.1(@sveltejs/vite-plugin-svelte@5.1.1(svelte@5.55.5)(vite@6.4.2(@types/node@25.6.0)))(svelte@5.55.5)(typescript@5.6.3)(vite@6.4.2(@types/node@25.6.0)))
       '@sveltejs/kit':
-        specifier: ^2.9.0
+        specifier: ~2.59.1
         version: 2.59.1(@sveltejs/vite-plugin-svelte@5.1.1(svelte@5.55.5)(vite@6.4.2(@types/node@25.6.0)))(svelte@5.55.5)(typescript@5.6.3)(vite@6.4.2(@types/node@25.6.0))
       '@sveltejs/vite-plugin-svelte':
-        specifier: ^5.0.0
+        specifier: ~5.1.1
         version: 5.1.1(svelte@5.55.5)(vite@6.4.2(@types/node@25.6.0))
       '@tauri-apps/cli':
-        specifier: ^2
+        specifier: ~2.11.1
         version: 2.11.1
       '@types/node':
-        specifier: ^25.6.0
+        specifier: ~25.6.0
         version: 25.6.0
       svelte:
-        specifier: ^5.0.0
+        specifier: ~5.55.5
         version: 5.55.5
       svelte-check:
-        specifier: ^4.0.0
+        specifier: ~4.4.8
         version: 4.4.8(picomatch@4.0.4)(svelte@5.55.5)(typescript@5.6.3)
       typescript:
         specifier: ~5.6.2
         version: 5.6.3
       vite:
-        specifier: ^6.0.3
+        specifier: ~6.4.2
         version: 6.4.2(@types/node@25.6.0)
 
 packages:

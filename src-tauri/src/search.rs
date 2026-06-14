@@ -42,6 +42,14 @@ pub(crate) struct SearchDirectoryListing {
     pub(crate) truncated: bool,
 }
 
+struct SearchContext<'a> {
+    regex: &'a Option<Regex>,
+    request: &'a SearchDirectoryRequest,
+    kind: &'a str,
+    hidden_mode: &'a str,
+    readonly_mode: &'a str,
+}
+
 #[tauri::command]
 pub(crate) fn search_directory(
     request: SearchDirectoryRequest,
@@ -86,17 +94,14 @@ pub(crate) fn search_directory_blocking(
 
     let mut entries = Vec::new();
     let mut truncated = false;
-    collect_search_entries(
-        &root_path,
-        &root_path,
-        &regex,
-        &request,
-        &kind,
-        &hidden_mode,
-        &readonly_mode,
-        &mut entries,
-        &mut truncated,
-    )?;
+    let context = SearchContext {
+        regex: &regex,
+        request: &request,
+        kind: &kind,
+        hidden_mode: &hidden_mode,
+        readonly_mode: &readonly_mode,
+    };
+    collect_search_entries(&root_path, &context, &mut entries, &mut truncated)?;
     sort_entries(&mut entries);
 
     let query_label = if name_regex.is_empty() {
@@ -131,13 +136,8 @@ pub(crate) fn search_directory_blocking(
 }
 
 fn collect_search_entries(
-    root_path: &Path,
     current_path: &Path,
-    regex: &Option<Regex>,
-    request: &SearchDirectoryRequest,
-    kind: &str,
-    hidden_mode: &str,
-    readonly_mode: &str,
+    context: &SearchContext<'_>,
     entries: &mut Vec<FileEntry>,
     truncated: &mut bool,
 ) -> Result<(), String> {
@@ -159,15 +159,8 @@ fn collect_search_entries(
         let Ok(file_entry) = build_file_entry(path.clone(), name) else {
             continue;
         };
-        let should_recurse = request.recursive && file_entry.kind == EntryKind::Directory;
-        if search_entry_matches(
-            &file_entry,
-            regex,
-            request,
-            kind,
-            hidden_mode,
-            readonly_mode,
-        ) {
+        let should_recurse = context.request.recursive && file_entry.kind == EntryKind::Directory;
+        if search_entry_matches(&file_entry, context) {
             entries.push(file_entry);
             if entries.len() >= SEARCH_MAX_RESULTS {
                 *truncated = true;
@@ -175,114 +168,60 @@ fn collect_search_entries(
             }
         }
         if should_recurse {
-            let _ = collect_search_entries(
-                root_path,
-                &path,
-                regex,
-                request,
-                kind,
-                hidden_mode,
-                readonly_mode,
-                entries,
-                truncated,
-            );
+            let _ = collect_search_entries(&path, context, entries, truncated);
         }
     }
     Ok(())
 }
 
-fn search_entry_matches(
-    entry: &FileEntry,
-    regex: &Option<Regex>,
-    request: &SearchDirectoryRequest,
-    kind: &str,
-    hidden_mode: &str,
-    readonly_mode: &str,
-) -> bool {
-    if let Some(regex) = regex {
+fn search_entry_matches(entry: &FileEntry, context: &SearchContext<'_>) -> bool {
+    if let Some(regex) = context.regex {
         if !regex.is_match(&entry.name) {
             return false;
         }
     }
-    if !search_kind_matches(&entry.kind, kind) {
+    if !search_kind_matches(&entry.kind, context.kind) {
         return false;
     }
-    if let Some(min_size) = request.min_size_bytes {
-        if !entry.size.is_some_and(|size| size >= min_size) {
+    if let Some(min_size) = context.request.min_size_bytes {
+        if entry.size.is_none_or(|size| size < min_size) {
             return false;
         }
     }
-    if let Some(max_size) = request.max_size_bytes {
-        if !entry.size.is_some_and(|size| size <= max_size) {
+    if let Some(max_size) = context.request.max_size_bytes {
+        if entry.size.is_none_or(|size| size > max_size) {
             return false;
         }
     }
-    if let Some(modified_after) = request.modified_after {
-        if !entry
+    if let Some(modified_after) = context.request.modified_after {
+        if entry
             .modified_at
-            .is_some_and(|modified_at| modified_at >= modified_after)
+            .is_none_or(|modified_at| modified_at < modified_after)
         {
             return false;
         }
     }
-    if let Some(modified_before) = request.modified_before {
-        if !entry
+    if let Some(modified_before) = context.request.modified_before {
+        if entry
             .modified_at
-            .is_some_and(|modified_at| modified_at <= modified_before)
+            .is_none_or(|modified_at| modified_at > modified_before)
         {
             return false;
         }
     }
-    if hidden_mode == "exclude" && entry.hidden {
+    if context.hidden_mode == "exclude" && entry.hidden {
         return false;
     }
-    if hidden_mode == "only" && !entry.hidden {
+    if context.hidden_mode == "only" && !entry.hidden {
         return false;
     }
-    if readonly_mode == "readonly" && !entry.readonly {
+    if context.readonly_mode == "readonly" && !entry.readonly {
         return false;
     }
-    if readonly_mode == "writable" && entry.readonly {
+    if context.readonly_mode == "writable" && entry.readonly {
         return false;
     }
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::tempdir;
-
-    fn request(root_path: String) -> SearchDirectoryRequest {
-        SearchDirectoryRequest {
-            root_path,
-            name_regex: String::new(),
-            recursive: false,
-            min_size_bytes: None,
-            max_size_bytes: None,
-            modified_after: None,
-            modified_before: None,
-            kind: None,
-            hidden_mode: None,
-            readonly_mode: None,
-        }
-    }
-
-    #[test]
-    fn search_directory_truncates_large_result_sets() {
-        let root = tempdir().expect("create search root");
-        for index in 0..=SEARCH_MAX_RESULTS {
-            fs::write(root.path().join(format!("{index:05}.txt")), "x")
-                .expect("write search fixture");
-        }
-
-        let listing = search_directory_blocking(request(root.path().to_string_lossy().to_string()))
-            .expect("search large fixture");
-
-        assert_eq!(listing.entries.len(), SEARCH_MAX_RESULTS);
-        assert!(listing.truncated);
-    }
 }
 
 pub(crate) fn normalized_search_kind(value: Option<&str>) -> Result<String, String> {
@@ -319,5 +258,42 @@ pub(crate) fn normalized_search_readonly_mode(value: Option<&str>) -> Result<Str
         "" | "any" => Ok("any".to_string()),
         "readonly" | "writable" => Ok(mode.to_string()),
         _ => Err("Unsupported readonly search mode.".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn request(root_path: String) -> SearchDirectoryRequest {
+        SearchDirectoryRequest {
+            root_path,
+            name_regex: String::new(),
+            recursive: false,
+            min_size_bytes: None,
+            max_size_bytes: None,
+            modified_after: None,
+            modified_before: None,
+            kind: None,
+            hidden_mode: None,
+            readonly_mode: None,
+        }
+    }
+
+    #[test]
+    fn search_directory_truncates_large_result_sets() {
+        let root = tempdir().expect("create search root");
+        for index in 0..=SEARCH_MAX_RESULTS {
+            fs::write(root.path().join(format!("{index:05}.txt")), "x")
+                .expect("write search fixture");
+        }
+
+        let listing = search_directory_blocking(request(root.path().to_string_lossy().to_string()))
+            .expect("search large fixture");
+
+        assert_eq!(listing.entries.len(), SEARCH_MAX_RESULTS);
+        assert!(listing.truncated);
     }
 }

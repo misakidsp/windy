@@ -14,13 +14,14 @@
   import OperationConfirmationDialog from "./OperationConfirmationDialog.svelte";
   import OperationFailureDialog from "./OperationFailureDialog.svelte";
   import PaneDiffDialog from "./PaneDiffDialog.svelte";
+  import PreferencesDialog from "./PreferencesDialog.svelte";
   import SearchDialog from "./SearchDialog.svelte";
+  import StatusBar from "./StatusBar.svelte";
   import TerminalPane from "./TerminalPane.svelte";
   import {
     archiveExtensions,
     defaultConsoleHeightRatio,
     defaultPageSize,
-    fileRowHeight,
     imageViewerExtensions,
     largeSearchResultWarningThreshold,
     moveCursorAfterSelection,
@@ -32,10 +33,23 @@
     getAppearanceSettings,
     getAppSettings,
     getKeybindSettings,
+    getLanguageSettings,
+    getSafeModeStatus,
+    enterSafeMode,
+    listLanguagePresets,
     listExternalCommands,
+    openConfigDirectory,
+    applyLanguagePreset,
+    resetAppearanceSettings,
+    resetAppSettings,
+    resetKeybindSettings,
+    resetLanguageSettings,
+    saveAppearanceSettings,
+    saveAppSettings,
+    saveKeybindSettings,
     saveOperationFailureLog as saveOperationFailureLogEffect,
   } from "./appSideEffects";
-  import { applyAppearanceToRoot, defaultAppearanceSettings, fontFamilySetting, normalizedExtensionColorMap } from "./appearanceModel";
+  import { applyAppearanceToRoot, defaultAppearanceSettings, fileRowHeightSetting, fontFamilySetting, normalizedExtensionColorMap } from "./appearanceModel";
   import {
     filteredCursorPatch,
     visibleEntriesFor,
@@ -54,6 +68,7 @@
     cancelDetailedDiff,
     compareLocalDirectoriesDetailed,
     openPathWithDefaultApp,
+    openPathWithTextEditor,
     parentDirectory,
     rootDirectory,
   } from "./fileSystemSideEffects";
@@ -169,10 +184,12 @@
   import {
     classifyPaneKey,
     classifyPrefixKey,
+    commandMatchesSingleKey,
     defaultKeybindSettings,
     type PaneKeyAction,
     type PrefixKeyAction,
   } from "./keyboardModel";
+  import { runPaneKeyActionWith, runPrefixKeyActionWith } from "./keyActionRunners";
   import { keyHelpGroups } from "./keyHelpModel";
   import { comparePaneEntries, detailedDiffSnapshot, diffEntriesForSide, type PaneDiffSnapshot } from "./diffModel";
   import { paneSourcesSupportDetailedDiff } from "./sourceCapabilityModel";
@@ -192,6 +209,7 @@
     shouldShowOperationPaths,
     targetSummary,
   } from "./operationJobModel";
+  import { operationResultStatus, operationResultTerminalLines } from "./operationResultModel";
   import { cancelFileOperationJob, executeFileOperationJob } from "./operationSideEffects";
   import {
     createFilePropertySnapshot,
@@ -207,9 +225,11 @@
     sftpParentRemotePath,
   } from "./pathUtils";
   import { createTerminalInstance, type XtermFitAddon, type XtermTerminal } from "./terminalFactory";
+  import { runTerminalCopyModeKeyActionWith, runTerminalShortcutActionWith } from "./terminalActionRunners";
   import {
     handleTerminalKeyRepeatState,
     stopTerminalKeyRepeatState,
+    terminalCopyModeKeyAction,
     terminalShortcutAction,
     type TerminalShortcutAction,
   } from "./terminalKeyHandling";
@@ -256,6 +276,8 @@
     FileOperationResult,
     FileOperationResultItem,
     KeybindSettings,
+    LanguagePresetInfo,
+    LanguageSettings,
     LocalFavoriteProfile,
     LocationDialogMode,
     LocationOption,
@@ -301,6 +323,10 @@
       doubleEscEnabled: true,
       doubleEscWindowMs: 700,
     },
+    externalEditor: {
+      command: "",
+      args: [],
+    },
     sftpSession: {
       lifecycle: "keepRecent",
       maxSessions: 2,
@@ -312,6 +338,15 @@
   };
   let appearanceSettings: AppearanceSettings = defaultAppearanceSettings;
   let keybindSettings: KeybindSettings = defaultKeybindSettings;
+  let languageSettings: LanguageSettings = {
+    schemaVersion: 1,
+    locale: "en",
+    messages: {},
+  };
+  let languagePresets: LanguagePresetInfo[] = [];
+  let preferencesDialogOpen = false;
+  let preferencesLoading = false;
+  let preferencesError = "";
   let keyHelpVisible = false;
   let lastCommandId = "app.start";
   let lastKey = "";
@@ -378,6 +413,7 @@
   let terminalFit: XtermFitAddon | null = null;
   let terminalUnlisten: UnlistenFn | null = null;
   let terminalExitUnlisten: UnlistenFn | null = null;
+  let preferencesUnlisten: UnlistenFn | null = null;
   let terminalSession: TerminalSessionState = createTerminalSessionState();
   let terminalCopyMode: TerminalCopyModeState = createTerminalCopyModeState();
   let terminalRepeatState: TerminalRepeatState | null = null;
@@ -442,7 +478,7 @@
     return consoleCwd;
   }
 
-  async function loadDirectory(paneId: PaneId, path: string): Promise<void> {
+  async function loadDirectory(paneId: PaneId, path: string, preferredCursorKey: string | null = null): Promise<void> {
     const load = nextLoadGeneration(loadGenerations, paneId);
     loadGenerations = load.generations;
     updatePane(paneId, { loading: true, error: null });
@@ -451,7 +487,16 @@
       const listing = await listLocalDirectory(invoke, path);
       if (isStaleLoad(loadGenerations, paneId, load.generation)) return;
 
-      updatePane(paneId, loadedEntriesPatch(createLocalSource(listing.path), listing.path, listing.entries));
+      updatePane(
+        paneId,
+        loadedEntriesPatch(
+          createLocalSource(listing.path),
+          listing.path,
+          listing.entries,
+          preferredCursorKey,
+          visibleLoadedEntries(paneId, listing.entries),
+        ),
+      );
       if (paneId === activePaneId && !consoleFocused) consoleCwd = listing.path;
       queueCursorScroll(paneId);
     } catch (error) {
@@ -470,7 +515,16 @@
       const listing = await listGitStatusDirectory(invoke, path);
       if (isStaleLoad(loadGenerations, paneId, load.generation)) return false;
 
-      updatePane(paneId, loadedEntriesPatch(createGitStatusSource(listing, returnPath), listing.displayPath, listing.entries));
+      updatePane(
+        paneId,
+        loadedEntriesPatch(
+          createGitStatusSource(listing, returnPath),
+          listing.displayPath,
+          listing.entries,
+          null,
+          visibleLoadedEntries(paneId, listing.entries),
+        ),
+      );
       if (paneId === activePaneId && !consoleFocused) consoleCwd = returnPath;
       queueCursorScroll(paneId);
       return true;
@@ -495,7 +549,12 @@
     }
   }
 
-  async function loadArchiveDirectory(paneId: PaneId, archivePath: string, innerPath = ""): Promise<void> {
+  async function loadArchiveDirectory(
+    paneId: PaneId,
+    archivePath: string,
+    innerPath = "",
+    preferredCursorKey: string | null = null,
+  ): Promise<void> {
     const load = nextLoadGeneration(loadGenerations, paneId);
     loadGenerations = load.generations;
     updatePane(paneId, { loading: true, error: null });
@@ -504,7 +563,16 @@
       const listing = await listArchiveDirectory(invoke, archivePath, innerPath);
       if (isStaleLoad(loadGenerations, paneId, load.generation)) return;
 
-      updatePane(paneId, loadedEntriesPatch(createArchiveSource(listing), listing.displayPath, listing.entries));
+      updatePane(
+        paneId,
+        loadedEntriesPatch(
+          createArchiveSource(listing),
+          listing.displayPath,
+          listing.entries,
+          preferredCursorKey,
+          visibleLoadedEntries(paneId, listing.entries),
+        ),
+      );
       if (paneId === activePaneId && !consoleFocused) consoleCwd = parentDirectoryFromArchivePath(archivePath);
       queueCursorScroll(paneId);
     } catch (error) {
@@ -596,12 +664,27 @@
     request: SearchDirectoryRequest,
     returnPath: string,
   ): void {
-    updatePane(paneId, loadedEntriesPatch(createSearchSource(listing, request, returnPath), listing.displayPath, listing.entries));
+    updatePane(
+      paneId,
+      loadedEntriesPatch(
+        createSearchSource(listing, request, returnPath),
+        listing.displayPath,
+        listing.entries,
+        null,
+        visibleLoadedEntries(paneId, listing.entries),
+      ),
+    );
     if (paneId === activePaneId && !consoleFocused) consoleCwd = returnPath;
     queueCursorScroll(paneId);
   }
 
-  async function loadSftpDirectory(paneId: PaneId, connectionId: string, remotePath: string, returnPath?: string): Promise<void> {
+  async function loadSftpDirectory(
+    paneId: PaneId,
+    connectionId: string,
+    remotePath: string,
+    returnPath?: string,
+    preferredCursorKey: string | null = null,
+  ): Promise<void> {
     const load = nextLoadGeneration(loadGenerations, paneId);
     loadGenerations = load.generations;
     updatePane(paneId, { loading: true, error: null });
@@ -611,7 +694,16 @@
       if (isStaleLoad(loadGenerations, paneId, load.generation)) return;
       const nextReturnPath = returnPath ?? sftpReturnPathForPane(panes[paneId]);
 
-      updatePane(paneId, loadedEntriesPatch(createSftpSource(listing, nextReturnPath), listing.displayPath, listing.entries));
+      updatePane(
+        paneId,
+        loadedEntriesPatch(
+          createSftpSource(listing, nextReturnPath),
+          listing.displayPath,
+          listing.entries,
+          preferredCursorKey,
+          visibleLoadedEntries(paneId, listing.entries),
+        ),
+      );
       queueCursorScroll(paneId);
     } catch (error) {
       if (isStaleLoad(loadGenerations, paneId, load.generation)) return;
@@ -696,6 +788,7 @@
   }
 
   function scrollTopForCursorIndex(paneId: PaneId, index: number): number {
+    const fileRowHeight = fileRowHeightSetting(appearanceSettings);
     const viewportHeight = listElements[paneId]?.clientHeight ?? defaultPageSize * fileRowHeight;
     const currentScrollTop = paneScrollTops[paneId] ?? 0;
     const rowTop = index * fileRowHeight;
@@ -749,8 +842,14 @@
     return result;
   }
 
+  function visibleLoadedEntries(paneId: PaneId, entries: FileEntry[]): FileEntry[] {
+    const pane = panes[paneId];
+    return visibleEntriesFor(entries, new Set(), "", pane.showHiddenFiles, pane.sortMode);
+  }
+
   function virtualEntryWindow(paneId: PaneId, entries: FileEntry[]): VirtualEntryWindow {
     const list = listElements[paneId];
+    const fileRowHeight = fileRowHeightSetting(appearanceSettings);
     const viewportHeight = list?.clientHeight ?? defaultPageSize * fileRowHeight;
     const scrollTop = paneScrollTops[paneId] ?? 0;
     const firstVisible = Math.floor(scrollTop / fileRowHeight);
@@ -872,131 +971,86 @@
     return true;
   }
 
-  function isKeyHelpKey(event: KeyboardEvent): boolean {
-    return event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey;
-  }
-
   async function runPrefixKeyAction(action: PrefixKeyAction): Promise<void> {
-    if (action.type === "cancel") {
-      statusMessage = "Prefix canceled.";
-      lastCommandId = "prefix.cancel";
-    } else if (action.type === "goFirst") {
-      moveCursorTo(0, "cursor.goFirst");
-    } else if (action.type === "goLast") {
-      moveCursorTo(visibleEntries(panes[activePaneId]).length - 1, "cursor.goLast");
-    } else if (action.type === "mkdir") {
-      previewOperation("mkdir");
-    } else if (action.type === "createFile") {
-      previewOperation("createFile");
-    } else if (action.type === "createArchive") {
-      previewOperation("createArchive");
-    } else if (action.type === "openCommandDialog") {
-      await openExternalCommandDialog();
-    } else if (action.type === "openPaneDiff") {
-      openPaneDiffDialog();
-    } else if (action.type === "openDetailedPaneDiff") {
-      await openDetailedPaneDiffDialog();
-    } else if (action.type === "openGitStatus") {
-      await openGitStatusSource();
-    } else if (action.type === "copySelectedPaths") {
-      await copySelectedPathsToClipboard();
-    } else if (action.type === "copyCurrentDirectory") {
-      await copyCurrentDirectoryToClipboard();
-    } else if (action.type === "copySelectedNames") {
-      await copySelectedNamesToClipboard();
-    } else {
-      statusMessage = `No command for ${action.prefix} ${action.key}.`;
-      lastCommandId = "prefix.noMatch";
-    }
+    await runPrefixKeyActionWith(action, {
+      setStatus(message, commandId) {
+        statusMessage = message;
+        lastCommandId = commandId;
+      },
+      goFirst() {
+        moveCursorTo(0, "cursor.goFirst");
+      },
+      goLast() {
+        moveCursorTo(visibleEntries(panes[activePaneId]).length - 1, "cursor.goLast");
+      },
+      previewOperation,
+      openExternalCommandDialog,
+      openPaneDiffDialog,
+      openDetailedPaneDiffDialog,
+      openGitStatusSource,
+      copySelectedPathsToClipboard,
+      copyCurrentDirectoryToClipboard,
+      copySelectedNamesToClipboard,
+    });
   }
 
   async function runPaneKeyAction(action: PaneKeyAction): Promise<void> {
-    if (action.type === "toggleTerminalFullscreen") {
-      await toggleTerminalFullscreen();
-    } else if (action.type === "toggleConsoleVisibility") {
-      toggleConsoleVisibility();
-    } else if (action.type === "undoLastOperation") {
-      previewUndoOperation();
-    } else if (action.type === "redoLastOperation") {
-      previewRedoOperation();
-    } else if (action.type === "openSearchDialog") {
-      openSearchDialog();
-    } else if (action.type === "startQuickFilter") {
-      enterQuickFilterInput(activePaneId);
-    } else if (action.type === "focusConsole") {
-      focusConsole();
-    } else if (action.type === "focusOtherByTab") {
-      focusOtherPane();
-      lastCommandId = action.reverse ? "pane.focusPreviousByTab" : "pane.focusNextByTab";
-    } else if (action.type === "goRoot") {
-      await goRoot();
-    } else if (action.type === "goHome") {
-      await goHome();
-    } else if (action.type === "openOtherPanePathHere") {
-      await openOtherPanePathHere();
-    } else if (action.type === "openCurrentPathInOtherPane") {
-      await openCurrentPathInOtherPane();
-    } else if (action.type === "clearQuickFilter") {
-      clearQuickFilter(activePaneId);
-    } else if (action.type === "closeOperationPreview") {
-      closeOperationPreview();
-    } else if (action.type === "extendSelection") {
-      extendSelection(action.delta);
-    } else if (action.type === "moveCursor") {
-      moveCursor(action.delta);
-    } else if (action.type === "moveCursorByPage") {
-      moveCursorByPage(action.direction);
-    } else if (action.type === "goFirst") {
-      moveCursorTo(0, "cursor.goFirst");
-    } else if (action.type === "goLast") {
-      moveCursorTo(visibleEntries(panes[activePaneId]).length - 1, "cursor.goLast");
-    } else if (action.type === "horizontalRight") {
-      if (activePaneId === "left") {
-        focusOtherPane();
-      } else {
-        await goParent();
-      }
-    } else if (action.type === "horizontalLeft") {
-      if (activePaneId === "right") {
-        focusOtherPane();
-      } else {
-        await goParent();
-      }
-    } else if (action.type === "goParent") {
-      await goParent();
-    } else if (action.type === "openFocusedWithDefaultApp") {
-      await openFocusedWithDefaultApp();
-    } else if (action.type === "openFocused") {
-      await openFocused();
-    } else if (action.type === "openProperties") {
-      openFilePropertiesDialog();
-    } else if (action.type === "toggleFocusedSelection") {
-      toggleFocusedSelection();
-    } else if (action.type === "selectAllVisible") {
-      selectAllVisible();
-    } else if (action.type === "refreshActivePane") {
-      await refreshActivePane();
-    } else if (action.type === "openLocationManager") {
-      await openSftpConnectionDialog();
-    } else if (action.type === "startPrefix") {
-      startPrefixMode(action.prefix);
-    } else if (action.type === "openExternalCommandDialog") {
-      await openExternalCommandDialog();
-    } else if (action.type === "cycleSortMode") {
-      cycleSortMode();
-    } else if (action.type === "toggleHiddenFiles") {
-      toggleHiddenFiles();
-    } else if (action.type === "delete") {
-      previewDeleteOperation(action.permanent);
-    } else if (action.type === "operation") {
-      previewOperation(action.kind);
-    }
+    await runPaneKeyActionWith(action, {
+      activePaneId: () => activePaneId,
+      isRightPaneActive: () => activePaneId === "right",
+      toggleTerminalFullscreen,
+      toggleConsoleVisibility,
+      previewUndoOperation,
+      previewRedoOperation,
+      openSearchDialog,
+      startQuickFilter: enterQuickFilterInput,
+      toggleKeyHelp() {
+        keyHelpVisible = !keyHelpVisible;
+        lastCommandId = keyHelpVisible ? "help.show" : "help.close";
+      },
+      focusConsole,
+      focusOtherPane,
+      setLastCommand(commandId) {
+        lastCommandId = commandId;
+      },
+      goRoot,
+      goHome,
+      openOtherPanePathHere,
+      openCurrentPathInOtherPane,
+      clearQuickFilter,
+      closeOperationPreview,
+      extendSelection,
+      moveCursor,
+      moveCursorByPage,
+      goFirst() {
+        moveCursorTo(0, "cursor.goFirst");
+      },
+      goLast() {
+        moveCursorTo(visibleEntries(panes[activePaneId]).length - 1, "cursor.goLast");
+      },
+      goParent,
+      openFocusedWithDefaultApp,
+      editFocused,
+      openFocused,
+      openFilePropertiesDialog,
+      toggleFocusedSelection,
+      selectAllVisible,
+      refreshActivePane,
+      openLocationManager: openSftpConnectionDialog,
+      startPrefixMode,
+      openExternalCommandDialog,
+      cycleSortMode,
+      toggleHiddenFiles,
+      previewDeleteOperation,
+      previewOperation,
+    });
   }
 
   function visiblePageSize(paneId: PaneId): number {
     const list = listElements[paneId];
     if (!list) return defaultPageSize;
 
+    const fileRowHeight = fileRowHeightSetting(appearanceSettings);
     return Math.max(1, Math.floor(list.clientHeight / fileRowHeight) - 1);
   }
 
@@ -1037,10 +1091,15 @@
     if (pane.source.kind === "archive") {
       const parentInnerPath = archiveParentInnerPath(pane.source.innerPath);
       if (parentInnerPath === null) {
-        await loadDirectory(paneId, parentDirectoryFromArchivePath(pane.source.archivePath));
+        await loadDirectory(paneId, parentDirectoryFromArchivePath(pane.source.archivePath), pane.source.archivePath);
       } else {
         lastCommandId = "entry.goParent";
-        await loadArchiveDirectory(paneId, pane.source.archivePath, parentInnerPath);
+        await loadArchiveDirectory(
+          paneId,
+          pane.source.archivePath,
+          parentInnerPath,
+          `${pane.source.archivePath}::/${pane.source.innerPath}`,
+        );
       }
       return;
     }
@@ -1049,7 +1108,13 @@
       const parentPath = sftpParentRemotePath(pane.source.remotePath);
       if (parentPath) {
         lastCommandId = "remote.goParent";
-        await loadSftpDirectory(paneId, pane.source.connectionId, parentPath, pane.source.returnPath);
+        await loadSftpDirectory(
+          paneId,
+          pane.source.connectionId,
+          parentPath,
+          pane.source.returnPath,
+          `sftp://${pane.source.connectionId}${normalizeSftpRemotePath(pane.source.remotePath)}`,
+        );
       }
       return;
     }
@@ -1060,7 +1125,7 @@
     const parent = await parentDirectory(invoke, currentPath);
     if (parent) {
       lastCommandId = "entry.goParent";
-      await loadDirectory(paneId, parent);
+      await loadDirectory(paneId, parent, currentPath);
     }
   }
 
@@ -1200,6 +1265,25 @@
     await openWithDefaultApp(action.entry);
   }
 
+  async function editFocused(): Promise<void> {
+    const pane = panes[activePaneId];
+    if (pane.source.kind === "archive" || pane.source.kind === "sftp") {
+      statusMessage = "Editing is available for local files only.";
+      lastCommandId = "file.edit.unsupportedSource";
+      return;
+    }
+
+    const entry = focusedEntry(pane, visibleEntries(pane));
+    if (!entry) return;
+    if (entry.kind !== "file") {
+      statusMessage = "Editing is available for files only.";
+      lastCommandId = "file.edit.unsupportedEntry";
+      return;
+    }
+
+    await openEditorForPath(entry.path, entry.name);
+  }
+
   async function openViewer(entry: FileEntry): Promise<void> {
     const extension = fileExtension(entry.name);
     const action = viewerOpenAction(panes[activePaneId], entry, extension, imageViewerExtensions, textViewerExtensions);
@@ -1274,6 +1358,17 @@
     } catch (error) {
       statusMessage = `Open failed: ${String(error)}`;
       lastCommandId = "entry.openDefaultAppFailed";
+    }
+  }
+
+  async function openEditorForPath(path: string, label: string): Promise<void> {
+    try {
+      await openPathWithTextEditor(invoke, path);
+      statusMessage = `Opened text editor: ${label}`;
+      lastCommandId = "file.edit";
+    } catch (error) {
+      statusMessage = `Edit failed: ${String(error)}`;
+      lastCommandId = "file.editFailed";
     }
   }
 
@@ -1832,25 +1927,12 @@
     return operationExecutionConfirmationMessage(job, panes[job.destinationPaneId ?? job.sourcePaneId].entries);
   }
 
-  function operationResultStatus(label: string, result: FileOperationResult): string {
-    const prefix = result.canceled ? `${label} canceled` : label;
-    return `${prefix}: ${result.succeeded.length} succeeded / ${result.failed.length} failed`;
-  }
-
   async function writeOperationResultToTerminal(label: string, result: FileOperationResult): Promise<void> {
     if (!appSettings.operationResult.printToTerminal || !terminalElement) return;
     if (!terminal) await initializeTerminal();
-    terminal?.writeln("");
-    for (const item of result.failed) {
-      terminal?.writeln(`[failed] ${item.path || "-"}: ${item.message}`);
+    for (const line of operationResultTerminalLines(label, result)) {
+      terminal?.writeln(line);
     }
-    for (const item of result.succeeded.slice(0, 10)) {
-      terminal?.writeln(`[ok] ${item.path || "-"}: ${item.message}`);
-    }
-    if (result.succeeded.length > 10) {
-      terminal?.writeln(`[ok] ...and ${result.succeeded.length - 10} more`);
-    }
-    terminal?.writeln(`[operation] ${operationResultStatus(label, result)}`);
   }
 
   async function saveOperationFailureLog(label: string, result: FileOperationResult): Promise<string | null> {
@@ -2878,91 +2960,47 @@
   }
 
   function handleTerminalCopyModeKeydown(event: KeyboardEvent): boolean {
-    if (!terminalCopyMode.active || event.type !== "keydown") return false;
+    if (!terminalCopyMode.active) return false;
+    const action = terminalCopyModeKeyAction(event);
+    if (!action) return false;
 
-    if (event.key === "Escape") {
-      exitTerminalCopyMode(true);
-      statusMessage = "Terminal copy mode cancelled.";
-      lastCommandId = "terminal.copyModeCancel";
-      return true;
-    }
-
-    if (event.key === "Enter") {
-      void copyTerminalSelection();
-      return true;
-    }
-
-    if (event.key === "ArrowLeft" || event.key === "h") {
-      moveTerminalCopyCursor(0, -1);
-      return true;
-    }
-
-    if (event.key === "ArrowRight" || event.key === "l") {
-      moveTerminalCopyCursor(0, 1);
-      return true;
-    }
-
-    if (event.key === "ArrowUp" || event.key === "k") {
-      moveTerminalCopyCursor(-1, 0);
-      return true;
-    }
-
-    if (event.key === "ArrowDown" || event.key === "j") {
-      moveTerminalCopyCursor(1, 0);
-      return true;
-    }
-
-    if (event.key === "PageUp") {
-      moveTerminalCopyCursor(-terminalRows(), 0);
-      return true;
-    }
-
-    if (event.key === "PageDown") {
-      moveTerminalCopyCursor(terminalRows(), 0);
-      return true;
-    }
-
-    if (event.key === "Home") {
-      if (terminalCopyMode.cursor) {
-        terminalCopyMode = setTerminalCopyCursorColumn(terminal, terminalCopyMode, 0);
-        updateTerminalCopySelection();
-        lastCommandId = "terminal.copyModeHome";
-      }
-      return true;
-    }
-
-    if (event.key === "End") {
-      if (terminalCopyMode.cursor && terminal) {
-        terminalCopyMode = setTerminalCopyCursorColumn(terminal, terminalCopyMode, Math.max(0, terminal.cols - 1));
-        updateTerminalCopySelection();
-        lastCommandId = "terminal.copyModeEnd";
-      }
-      return true;
-    }
-
+    void runTerminalCopyModeKeyActionWith(action, {
+      cancel() {
+        exitTerminalCopyMode(true);
+        statusMessage = "Terminal copy mode cancelled.";
+        lastCommandId = "terminal.copyModeCancel";
+      },
+      copy: copyTerminalSelection,
+      moveCursor: moveTerminalCopyCursor,
+      pageRows: terminalRows,
+      home() {
+        if (terminalCopyMode.cursor) {
+          terminalCopyMode = setTerminalCopyCursorColumn(terminal, terminalCopyMode, 0);
+          updateTerminalCopySelection();
+          lastCommandId = "terminal.copyModeHome";
+        }
+      },
+      end() {
+        if (terminalCopyMode.cursor && terminal) {
+          terminalCopyMode = setTerminalCopyCursorColumn(terminal, terminalCopyMode, Math.max(0, terminal.cols - 1));
+          updateTerminalCopySelection();
+          lastCommandId = "terminal.copyModeEnd";
+        }
+      },
+    });
     return true;
   }
 
   async function runTerminalShortcutAction(action: TerminalShortcutAction): Promise<void> {
-    if (action === "copyMode") {
-      enterTerminalCopyMode();
-    } else if (action === "scrollPageUp") {
-      scrollTerminalByPage(-1);
-    } else if (action === "scrollPageDown") {
-      scrollTerminalByPage(1);
-    } else if (action === "scrollLineUp") {
-      scrollTerminalByLine(-1);
-    } else if (action === "scrollLineDown") {
-      scrollTerminalByLine(1);
-    } else if (action === "insertActiveSelection") {
-      await insertActiveSelectionIntoTerminal();
-    } else if (action === "toggleVisible") {
-      toggleConsoleVisibility();
-    } else if (action === "toggleFullscreen") {
-      await toggleTerminalFullscreen();
-    } else if (action === "returnFromConsole") {
-      returnFromConsole();
-    }
+    await runTerminalShortcutActionWith(action, {
+      enterCopyMode: enterTerminalCopyMode,
+      scrollPage: scrollTerminalByPage,
+      scrollLine: scrollTerminalByLine,
+      insertActiveSelection: insertActiveSelectionIntoTerminal,
+      toggleVisible: toggleConsoleVisibility,
+      toggleFullscreen: toggleTerminalFullscreen,
+      returnFromConsole,
+    });
   }
 
   async function handleConsoleFallbackKeydown(event: KeyboardEvent): Promise<void> {
@@ -2973,7 +3011,7 @@
       return;
     }
 
-    const shortcutAction = terminalShortcutAction(event);
+    const shortcutAction = terminalShortcutAction(event, keybindSettings);
     if (shortcutAction) {
       event.preventDefault();
       await runTerminalShortcutAction(shortcutAction);
@@ -3014,7 +3052,7 @@
       return false;
     }
 
-    const shortcutAction = terminalShortcutAction(event);
+    const shortcutAction = terminalShortcutAction(event, keybindSettings);
     if (shortcutAction) {
       void runTerminalShortcutAction(shortcutAction);
       return false;
@@ -3040,6 +3078,11 @@
     if (!viewer) return;
     event.preventDefault();
 
+    if (event.key === "e" && !(viewer.kind === "text" && viewer.searchMode)) {
+      await openEditorForPath(viewer.path, viewer.title);
+      return;
+    }
+
     const result = handleViewerKey(viewer, event.key, viewerPageSize());
     viewer = result.viewer;
     if (result.commandId) lastCommandId = result.commandId;
@@ -3063,7 +3106,7 @@
     const entries = snapshot.failedEntries;
     const source = createOperationResultSource(entries, snapshot.returnPath, snapshot.label);
     operationFailureDialog = null;
-    updatePane(side, loadedEntriesPatch(source, source.location, entries));
+    updatePane(side, loadedEntriesPatch(source, source.location, entries, null, visibleLoadedEntries(side, entries)));
     activePaneId = side;
     if (!consoleFocused) consoleCwd = source.returnPath;
     queueCursorScroll(side);
@@ -3107,7 +3150,7 @@
     const source = createDiffSource(side, entries, sourcePane.source.kind, basePath, snapshot.mode);
     paneDiffDialog = null;
     paneDiffListElement = null;
-    updatePane(side, loadedEntriesPatch(source, source.location, entries));
+    updatePane(side, loadedEntriesPatch(source, source.location, entries, null, visibleLoadedEntries(side, entries)));
     activePaneId = side;
     if (!consoleFocused) consoleCwd = source.returnPath;
     queueCursorScroll(side);
@@ -3420,6 +3463,15 @@
   }
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
+    if (preferencesDialogOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        preferencesDialogOpen = false;
+        lastCommandId = "preferences.close";
+      }
+      return;
+    }
+
     if (consoleFocused) {
       // xterm owns focused terminal keystrokes. If DOM focus was lost while
       // Windy still considers the console active, recover the terminal focus
@@ -3433,18 +3485,11 @@
     lastKey = event.key;
 
     if (keyHelpVisible) {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" || commandMatchesSingleKey(keybindSettings, "help.toggle", event)) {
         event.preventDefault();
         keyHelpVisible = false;
         lastCommandId = "help.close";
       }
-      return;
-    }
-
-    if (isKeyHelpKey(event)) {
-      event.preventDefault();
-      keyHelpVisible = true;
-      lastCommandId = "help.show";
       return;
     }
 
@@ -3556,17 +3601,26 @@
     }
   }
 
-  function handleKeyup(event: KeyboardEvent): void {
-    if (keyHelpVisible && isKeyHelpKey(event)) {
-      event.preventDefault();
-      keyHelpVisible = false;
-      lastCommandId = "help.close";
-    }
-  }
-
   function activeFocusedEntryPath(): string {
     const pane = panes[activePaneId];
     return focusedEntryPath(pane, visibleEntries(pane));
+  }
+
+  function applyLoadedAppearanceSettings(settings: AppearanceSettings): void {
+    appearanceSettings = settings;
+    applyAppearanceToRoot(document.documentElement, appearanceSettings);
+    if (terminal) {
+      terminal.options.fontFamily = fontFamilySetting(appearanceSettings.fonts.terminalFamily);
+      terminal.options.fontSize = appearanceSettings.fonts.terminalSize;
+      terminal.options.theme = {
+        ...terminal.options.theme,
+        background: appearanceSettings.colors["terminal.background"],
+        foreground: appearanceSettings.colors["terminal.foreground"],
+        cursor: appearanceSettings.colors["terminal.cursor"],
+        selectionBackground: appearanceSettings.colors["terminal.selectionBackground"],
+      };
+      terminalFit?.fit();
+    }
   }
 
   async function loadAppSettings(): Promise<void> {
@@ -3581,20 +3635,7 @@
 
   async function loadAppearanceSettings(): Promise<void> {
     try {
-      appearanceSettings = await getAppearanceSettings(invoke);
-      applyAppearanceToRoot(document.documentElement, appearanceSettings);
-      if (terminal) {
-        terminal.options.fontFamily = fontFamilySetting(appearanceSettings.fonts.terminalFamily);
-        terminal.options.fontSize = appearanceSettings.fonts.terminalSize;
-        terminal.options.theme = {
-          ...terminal.options.theme,
-          background: appearanceSettings.colors["terminal.background"],
-          foreground: appearanceSettings.colors["terminal.foreground"],
-          cursor: appearanceSettings.colors["terminal.cursor"],
-          selectionBackground: appearanceSettings.colors["terminal.selectionBackground"],
-        };
-        terminalFit?.fit();
-      }
+      applyLoadedAppearanceSettings(await getAppearanceSettings(invoke));
       lastCommandId = "appearance.load";
     } catch (error) {
       statusMessage = `Appearance settings load failed: ${String(error)}`;
@@ -3612,15 +3653,184 @@
     }
   }
 
+  async function openPreferencesDialog(): Promise<void> {
+    preferencesDialogOpen = true;
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      const [loadedApp, loadedAppearance, loadedKeybind, loadedLanguage, loadedPresets] = await Promise.all([
+        getAppSettings(invoke),
+        getAppearanceSettings(invoke),
+        getKeybindSettings(invoke),
+        getLanguageSettings(invoke),
+        listLanguagePresets(invoke),
+      ]);
+      appSettings = loadedApp;
+      applyLoadedAppearanceSettings(loadedAppearance);
+      keybindSettings = loadedKeybind;
+      languageSettings = loadedLanguage;
+      languagePresets = loadedPresets;
+      statusMessage = "Preferences opened.";
+      lastCommandId = "preferences.open";
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `Preferences load failed: ${String(error)}`;
+      lastCommandId = "preferences.loadFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function savePreferencesAppSettings(settings: AppSettings): Promise<void> {
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      appSettings = await saveAppSettings(invoke, settings);
+      statusMessage = "General settings saved.";
+      lastCommandId = "preferences.saveGeneral";
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `General settings save failed: ${String(error)}`;
+      lastCommandId = "preferences.saveGeneralFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function savePreferencesAppearanceSettings(settings: AppearanceSettings): Promise<void> {
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      applyLoadedAppearanceSettings(await saveAppearanceSettings(invoke, settings));
+      statusMessage = "Appearance settings saved.";
+      lastCommandId = "preferences.saveAppearance";
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `Appearance settings save failed: ${String(error)}`;
+      lastCommandId = "preferences.saveAppearanceFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function savePreferencesKeybindSettings(settings: KeybindSettings): Promise<void> {
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      keybindSettings = await saveKeybindSettings(invoke, settings);
+      statusMessage = "Keybinding settings saved.";
+      lastCommandId = "preferences.saveKeybindings";
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `Keybinding settings save failed: ${String(error)}`;
+      lastCommandId = "preferences.saveKeybindingsFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function applyPreferencesLanguagePreset(locale: string): Promise<void> {
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      languageSettings = await applyLanguagePreset(invoke, locale);
+      statusMessage = `Language file applied: ${languageSettings.locale}`;
+      lastCommandId = "preferences.applyLanguage";
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `Language file apply failed: ${String(error)}`;
+      lastCommandId = "preferences.applyLanguageFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function openPreferencesConfigDirectory(): Promise<void> {
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      await openConfigDirectory(invoke);
+      statusMessage = "Config directory opened.";
+      lastCommandId = "preferences.openConfigDirectory";
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `Open config directory failed: ${String(error)}`;
+      lastCommandId = "preferences.openConfigDirectoryFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function resetPreferencesSettings(target: "app" | "appearance" | "keybind" | "language"): Promise<void> {
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      if (target === "app") {
+        appSettings = await resetAppSettings(invoke);
+      } else if (target === "appearance") {
+        applyLoadedAppearanceSettings(await resetAppearanceSettings(invoke));
+      } else if (target === "keybind") {
+        keybindSettings = await resetKeybindSettings(invoke);
+      } else {
+        languageSettings = await resetLanguageSettings(invoke);
+      }
+      statusMessage = "Settings reset. Previous config files were backed up.";
+      lastCommandId = `preferences.reset.${target}`;
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `Settings reset failed: ${String(error)}`;
+      lastCommandId = "preferences.resetFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function enterPreferencesSafeMode(): Promise<void> {
+    preferencesLoading = true;
+    preferencesError = "";
+    try {
+      const status = await enterSafeMode(invoke);
+      appSettings = await getAppSettings(invoke);
+      applyLoadedAppearanceSettings(await getAppearanceSettings(invoke));
+      keybindSettings = await getKeybindSettings(invoke);
+      languageSettings = await getLanguageSettings(invoke);
+      statusMessage = `${status.message} Backups: ${status.backupPaths.length}`;
+      lastCommandId = "preferences.safeMode";
+    } catch (error) {
+      preferencesError = String(error);
+      statusMessage = `Safe Mode failed: ${String(error)}`;
+      lastCommandId = "preferences.safeModeFailed";
+    } finally {
+      preferencesLoading = false;
+    }
+  }
+
+  async function loadSafeModeStatus(): Promise<void> {
+    try {
+      const status = await getSafeModeStatus(invoke);
+      if (!status.active) return;
+      statusMessage = `${status.message} Backups: ${status.backupPaths.length}`;
+      lastCommandId = "safeMode.startup";
+    } catch (error) {
+      statusMessage = `Safe Mode status failed: ${String(error)}`;
+      lastCommandId = "safeMode.statusFailed";
+    }
+  }
+
   onMount(() => {
     const stopTerminalRepeatOnBlur = () => stopTerminalKeyRepeat();
     const blockMouseEvent = (event: MouseEvent) => {
+      if (
+        preferencesDialogOpen ||
+        (event.target instanceof HTMLElement && event.target.closest("[data-windy-interactive]"))
+      ) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
     };
 
     window.addEventListener("keydown", handleKeydown);
-    window.addEventListener("keyup", handleKeyup);
     window.addEventListener("blur", stopTerminalRepeatOnBlur);
     window.addEventListener("contextmenu", blockMouseEvent, { capture: true });
     window.addEventListener("mousedown", blockMouseEvent, { capture: true });
@@ -3636,16 +3846,21 @@
     }).then((unlisten) => {
       terminalExitUnlisten = unlisten;
     });
+    void listen("preferences-open", () => {
+      void openPreferencesDialog();
+    }).then((unlisten) => {
+      preferencesUnlisten = unlisten;
+    });
     applyAppearanceToRoot(document.documentElement, appearanceSettings);
     void loadAppSettings();
     void loadAppearanceSettings();
     void loadKeybindSettings();
+    void loadSafeModeStatus();
     void ensureSftpProfilesLoaded();
     void initializePanes();
 
     return () => {
       window.removeEventListener("keydown", handleKeydown);
-      window.removeEventListener("keyup", handleKeyup);
       window.removeEventListener("blur", stopTerminalRepeatOnBlur);
       window.removeEventListener("contextmenu", blockMouseEvent, { capture: true });
       window.removeEventListener("mousedown", blockMouseEvent, { capture: true });
@@ -3654,6 +3869,7 @@
       stopTerminalKeyRepeat();
       terminalUnlisten?.();
       terminalExitUnlisten?.();
+      preferencesUnlisten?.();
       void stopTerminal(invoke);
       listElements.left = null;
       listElements.right = null;
@@ -3702,6 +3918,7 @@
         active={activePaneId === paneId}
         visibleEntries={visible}
         virtualWindow={virtualEntryWindow(paneId, visible)}
+        rowHeight={fileRowHeightSetting(appearanceSettings)}
         headerLabel={paneHeaderLabel(pane)}
         meta={paneMeta(pane, visible)}
         {showParentEntry}
@@ -3725,17 +3942,19 @@
     bind:terminalElement
   />
 
-  <footer class="status-bar">
-    <span class="status-path" title={activeFocusedEntryPath()}>{activeFocusedEntryPath() || "-"}</span>
-    <span class="status-message" title={statusMessage}>{statusMessage}</span>
-    <span>active: {activePaneId}</span>
-    <span>focus: {consoleFocused ? "console" : "pane"}</span>
-    <span>console: {consoleVisible ? (terminalFullscreen ? "fullscreen" : terminalSession.starting ? "starting" : terminalSession.started ? "running" : "ready") : "hidden"}</span>
-    <span>command: {lastCommandId}</span>
-    <span>key: {lastKey || "-"}</span>
-    <span>select move: {moveCursorAfterSelection ? "on" : "off"}</span>
-    <span>Windy beta</span>
-  </footer>
+  <StatusBar
+    activePath={activeFocusedEntryPath()}
+    {statusMessage}
+    {activePaneId}
+    {consoleFocused}
+    {consoleVisible}
+    {terminalFullscreen}
+    terminalStarting={terminalSession.starting}
+    terminalStarted={terminalSession.started}
+    {lastCommandId}
+    {lastKey}
+    {moveCursorAfterSelection}
+  />
 
   {#if viewer}
     <InternalViewer
@@ -3812,6 +4031,29 @@
 
   {#if paneDiffDialog}
     <PaneDiffDialog snapshot={paneDiffDialog} bind:listElement={paneDiffListElement} />
+  {/if}
+
+  {#if preferencesDialogOpen}
+    <PreferencesDialog
+      {appSettings}
+      {appearanceSettings}
+      {keybindSettings}
+      {languageSettings}
+      {languagePresets}
+      loading={preferencesLoading}
+      error={preferencesError}
+      onClose={() => {
+        preferencesDialogOpen = false;
+        lastCommandId = "preferences.close";
+      }}
+      onOpenConfigDirectory={openPreferencesConfigDirectory}
+      onSaveAppSettings={savePreferencesAppSettings}
+      onSaveAppearanceSettings={savePreferencesAppearanceSettings}
+      onSaveKeybindSettings={savePreferencesKeybindSettings}
+      onApplyLanguagePreset={applyPreferencesLanguagePreset}
+      onReset={resetPreferencesSettings}
+      onEnterSafeMode={enterPreferencesSafeMode}
+    />
   {/if}
 
   {#if operationJob && confirmationDialogOpen}
@@ -3919,36 +4161,4 @@
     border-bottom: 1px solid var(--windy-pane-border, #6b7280);
   }
 
-  .status-bar {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    overflow: hidden;
-    padding: 0 10px;
-    border-top: 1px solid var(--windy-pane-border, #2f3540);
-    background: var(--windy-pane-header-background, #252a33);
-    color: var(--windy-app-foreground, #cbd5e1);
-    font-size: 11px;
-    white-space: nowrap;
-  }
-
-  .status-path {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--windy-app-foreground, #f8fafc);
-    text-overflow: ellipsis;
-  }
-
-  .status-message {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--windy-terminal-foreground, #d1d5db);
-    text-overflow: ellipsis;
-  }
-
-  .status-bar span:not(.status-path, .status-message) {
-    flex: 0 0 auto;
-  }
 </style>

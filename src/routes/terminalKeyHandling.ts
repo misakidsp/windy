@@ -1,6 +1,7 @@
 import { terminalRepeatDelayMs, terminalRepeatIntervalMs } from "./constants";
+import { commandMatchesSingleKey, defaultKeybindSettings, type KeyLike } from "./keyboardModel";
 import { terminalInputForKeyboardEvent } from "./terminalKeys";
-import type { TerminalRepeatState } from "./types";
+import type { KeybindSettings, TerminalRepeatState } from "./types";
 
 export type TerminalShortcutAction =
   | "copyMode"
@@ -13,35 +14,58 @@ export type TerminalShortcutAction =
   | "toggleFullscreen"
   | "returnFromConsole";
 
+export type TerminalCopyModeKeyAction =
+  | "cancel"
+  | "copy"
+  | "left"
+  | "right"
+  | "up"
+  | "down"
+  | "pageUp"
+  | "pageDown"
+  | "home"
+  | "end"
+  | "consume";
+
 export type TerminalRepeatResult = {
   state: TerminalRepeatState | null;
   handled: boolean;
 };
 
-export function terminalShortcutAction(event: KeyboardEvent): TerminalShortcutAction | null {
+type TerminalShortcutKeyLike = KeyLike & Pick<KeyboardEvent, "type">;
+
+export function terminalShortcutAction(
+  event: TerminalShortcutKeyLike,
+  settings: KeybindSettings = defaultKeybindSettings,
+): TerminalShortcutAction | null {
   if (event.type !== "keydown") return null;
 
-  if (event.ctrlKey && event.shiftKey && (event.key.toLowerCase() === "c" || event.code === "KeyC")) {
-    return "copyMode";
-  }
-  if (event.shiftKey && event.key === "PageUp") return "scrollPageUp";
-  if (event.shiftKey && event.key === "PageDown") return "scrollPageDown";
-  if (event.ctrlKey && event.shiftKey && event.key === "ArrowUp") return "scrollLineUp";
-  if (event.ctrlKey && event.shiftKey && event.key === "ArrowDown") return "scrollLineDown";
-  if (event.ctrlKey && event.shiftKey && (event.key.toLowerCase() === "y" || event.code === "KeyY")) {
-    return "insertActiveSelection";
-  }
-  if (event.ctrlKey && event.shiftKey && (event.key.toLowerCase() === "x" || event.code === "KeyX")) {
-    return "toggleVisible";
-  }
-  if (event.altKey && !event.ctrlKey && !event.metaKey && (event.key.toLowerCase() === "f" || event.code === "KeyF")) {
-    return "toggleFullscreen";
-  }
-  if (event.ctrlKey && !event.shiftKey && (event.key.toLowerCase() === "x" || event.code === "KeyX")) {
-    return "returnFromConsole";
-  }
+  if (commandMatchesSingleKey(settings, "terminal.copyMode", event)) return "copyMode";
+  if (commandMatchesSingleKey(settings, "terminal.scrollPageUp", event)) return "scrollPageUp";
+  if (commandMatchesSingleKey(settings, "terminal.scrollPageDown", event)) return "scrollPageDown";
+  if (commandMatchesSingleKey(settings, "terminal.scrollLineUp", event)) return "scrollLineUp";
+  if (commandMatchesSingleKey(settings, "terminal.scrollLineDown", event)) return "scrollLineDown";
+  if (commandMatchesSingleKey(settings, "terminal.insertActiveSelection", event)) return "insertActiveSelection";
+  if (commandMatchesSingleKey(settings, "terminal.toggleVisible", event)) return "toggleVisible";
+  if (commandMatchesSingleKey(settings, "terminal.toggleFullscreen", event)) return "toggleFullscreen";
+  if (commandMatchesSingleKey(settings, "terminal.focusPreviousPane", event)) return "returnFromConsole";
 
   return null;
+}
+
+export function terminalCopyModeKeyAction(event: Pick<KeyboardEvent, "key" | "type">): TerminalCopyModeKeyAction | null {
+  if (event.type !== "keydown") return null;
+  if (event.key === "Escape") return "cancel";
+  if (event.key === "Enter") return "copy";
+  if (event.key === "ArrowLeft" || event.key === "h") return "left";
+  if (event.key === "ArrowRight" || event.key === "l") return "right";
+  if (event.key === "ArrowUp" || event.key === "k") return "up";
+  if (event.key === "ArrowDown" || event.key === "j") return "down";
+  if (event.key === "PageUp") return "pageUp";
+  if (event.key === "PageDown") return "pageDown";
+  if (event.key === "Home") return "home";
+  if (event.key === "End") return "end";
+  return "consume";
 }
 
 export function stopTerminalKeyRepeatState(

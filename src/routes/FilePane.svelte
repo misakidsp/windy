@@ -14,6 +14,7 @@
   export let active = false;
   export let visibleEntries: FileEntry[] = [];
   export let virtualWindow: VirtualEntryWindow;
+  export let rowHeight = 20;
   export let headerLabel: string;
   export let meta: string;
   export let showParentEntry = false;
@@ -28,7 +29,7 @@
   export let formatDate: (seconds: number | null) => string;
 </script>
 
-<section class:active class="file-pane" aria-label={pane.title}>
+<section class:active class="file-pane" aria-label={pane.title} style={`--file-row-height: ${rowHeight}px`}>
   <header class="pane-header">
     <div class="pane-title" title={headerLabel}>
       {headerLabel}
@@ -92,11 +93,12 @@
 <style>
   .file-pane {
     display: grid;
-    grid-template-rows: auto 20px minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
     min-width: 0;
     min-height: 0;
     border-right: 1px solid var(--windy-pane-border, #4b5563);
     background: var(--windy-pane-background, #202329);
+    font-size: var(--windy-ui-font-size, 12px);
   }
 
   .file-pane:last-child {
@@ -123,7 +125,7 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 13px;
+    font-size: 1.08em;
   }
 
   .pane-meta {
@@ -132,17 +134,18 @@
     text-overflow: ellipsis;
     margin-top: 3px;
     color: var(--windy-terminal-foreground, #aeb6c3);
-    font-size: 12px;
+    font-size: 1em;
   }
 
   .pane-divider {
     display: flex;
     align-items: center;
     gap: 4px;
+    min-height: 20px;
     padding-left: 8px;
     border-bottom: 1px solid var(--windy-pane-border, #606875);
     color: var(--windy-entry-muted-foreground, #7f8998);
-    font-size: 11px;
+    font-size: 0.92em;
   }
 
   .pane-divider.filter-active {
@@ -192,8 +195,8 @@
     overflow-x: hidden;
     overflow-y: auto;
     padding: 2px 0;
-    font-size: 12px;
-    line-height: 20px;
+    font-size: 1em;
+    line-height: var(--file-row-height, var(--windy-file-row-height, 20px));
   }
 
   .file-row {
@@ -201,7 +204,7 @@
     grid-template-columns: 18px 18px minmax(0, 1fr) minmax(54px, 76px) minmax(72px, 116px);
     align-items: center;
     min-width: 0;
-    height: 20px;
+    height: var(--file-row-height, var(--windy-file-row-height, 20px));
     padding-right: 8px;
     color: var(--windy-entry-foreground, #d8dee9);
   }

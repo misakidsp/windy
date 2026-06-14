@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "locale": "qya-Latn",
+  "messages": {
+    "dialog.ok": "Mára",
+    "dialog.cancel": "Áva",
+    "dialog.close": "Holuva",
+    "operation.confirmTitle": "Tancavë {label}",
+    "operation.failedTitle": "{label} úvanwa",
+    "operation.executing": "Carë...",
+    "location.title": "Nómion Túrindo",
+    "search.title": "Saca",
+    "externalCommand.title": "Ettelea Axanir",
+    "terminal.copyMode": "Tyelpetéma: mene ar cilë, Enter mapa, Esc hauta.",
+    "viewer.openFailed": "Cenindo úmë mára: {error}",
+    "settings.loadFailed": "Panostaron hlarë úmë mára: {error}"
+  }
+}

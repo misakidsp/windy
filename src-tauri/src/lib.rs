@@ -1,9 +1,14 @@
 use serde::Serialize;
 use std::{
-    fs, io,
+    env, fs, io,
     path::{Path, PathBuf},
     process::Command,
+    sync::Mutex,
     time::UNIX_EPOCH,
+};
+use tauri::{
+    menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu},
+    Emitter,
 };
 
 mod archive;
@@ -22,10 +27,14 @@ mod viewer;
 
 use archive::list_archive_directory_blocking;
 use config::{
+    backup_existing_settings_files, config_dir, language_preset_settings, language_presets,
     load_app_settings, load_appearance_settings, load_external_commands, load_keybind_settings,
+    load_language_settings, reset_all_settings_to_defaults,
     save_app_settings as save_app_settings_file,
+    save_appearance_settings as save_appearance_settings_file,
+    save_keybind_settings as save_keybind_settings_file, save_language_settings,
     save_operation_failure_log as save_operation_failure_log_file, AppSettings, AppearanceSettings,
-    ExternalCommandDefinition, KeybindSettings,
+    ExternalCommandDefinition, KeybindSettings, LanguagePresetInfo, LanguageSettings,
 };
 use detailed_diff::{
     compare_local_directories_detailed_blocking_with_cancellation, DetailedDiffCancellationState,
@@ -62,9 +71,10 @@ use file_ops::validate_file_name;
 
 #[cfg(test)]
 use config::{
-    load_app_settings_from_dir, load_app_settings_from_path, load_external_commands_from_path,
+    backup_settings_files_from_dir, load_app_settings_from_dir, load_app_settings_from_path,
+    load_external_commands_from_path, reset_all_settings_to_defaults_in_dir,
     save_app_settings_to_dir, save_external_commands_to_path, save_operation_failure_log_to_path,
-    ExternalCommandsFile, OperationResultSettings, SftpSessionSettings,
+    ExternalCommandsFile, ExternalEditorSettings, OperationResultSettings, SftpSessionSettings,
 };
 #[cfg(test)]
 use path_utils::expand_user_path;
@@ -80,6 +90,22 @@ use terminal::{
 };
 
 use viewer::{read_archive_image_file, read_archive_text_file, read_image_file, read_text_file};
+
+const MENU_OPEN_CONFIG_DIRECTORY: &str = "settings.openConfigDirectory";
+const MENU_LANGUAGE_EN: &str = "settings.language.en";
+const MENU_LANGUAGE_JA: &str = "settings.language.ja";
+const MENU_LANGUAGE_QUENYA: &str = "settings.language.qyaLatn";
+
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SafeModeStatus {
+    active: bool,
+    backup_paths: Vec<String>,
+    message: String,
+}
+
+#[derive(Default)]
+struct SafeModeState(Mutex<SafeModeStatus>);
 
 #[cfg(test)]
 use sftp::{join_sftp_remote_path, parse_sftp_uri, sftp_parent_remote_path, sftp_remote_leaf_name};
@@ -182,8 +208,106 @@ fn get_keybind_settings() -> Result<KeybindSettings, String> {
 }
 
 #[tauri::command]
+fn get_language_settings() -> Result<LanguageSettings, String> {
+    load_language_settings()
+}
+
+#[tauri::command]
 fn save_app_settings(settings: AppSettings) -> Result<AppSettings, String> {
     save_app_settings_file(&settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn save_appearance_settings(settings: AppearanceSettings) -> Result<AppearanceSettings, String> {
+    save_appearance_settings_file(&settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn save_keybind_settings(settings: KeybindSettings) -> Result<KeybindSettings, String> {
+    save_keybind_settings_file(&settings)?;
+    load_keybind_settings()
+}
+
+#[tauri::command]
+fn reset_app_settings() -> Result<AppSettings, String> {
+    backup_existing_settings_files("reset-general")?;
+    let settings = AppSettings::default();
+    save_app_settings_file(&settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn reset_appearance_settings() -> Result<AppearanceSettings, String> {
+    backup_existing_settings_files("reset-appearance")?;
+    let settings = AppearanceSettings::default();
+    save_appearance_settings_file(&settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn reset_keybind_settings() -> Result<KeybindSettings, String> {
+    backup_existing_settings_files("reset-keybindings")?;
+    let settings = KeybindSettings::default();
+    save_keybind_settings_file(&settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn reset_language_settings() -> Result<LanguageSettings, String> {
+    backup_existing_settings_files("reset-language")?;
+    let settings = LanguageSettings::default();
+    save_language_settings(&settings)?;
+    Ok(settings)
+}
+
+fn enter_safe_mode_blocking(label: &str) -> Result<SafeModeStatus, String> {
+    let backup_paths = backup_existing_settings_files(label)?;
+    reset_all_settings_to_defaults()?;
+    Ok(SafeModeStatus {
+        active: true,
+        backup_paths: backup_paths.into_iter().map(path_to_string).collect(),
+        message: "Safe Mode loaded default settings after backing up current config files."
+            .to_string(),
+    })
+}
+
+#[tauri::command]
+fn enter_safe_mode(state: tauri::State<'_, SafeModeState>) -> Result<SafeModeStatus, String> {
+    let status = enter_safe_mode_blocking("safe-mode-manual")?;
+    *state
+        .0
+        .lock()
+        .map_err(|_| "Safe Mode state lock failed.".to_string())? = status.clone();
+    Ok(status)
+}
+
+#[tauri::command]
+fn get_safe_mode_status(state: tauri::State<'_, SafeModeState>) -> Result<SafeModeStatus, String> {
+    state
+        .0
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|_| "Safe Mode state lock failed.".to_string())
+}
+
+#[tauri::command]
+fn open_config_directory() -> Result<(), String> {
+    load_app_settings()?;
+    let path = config_dir()?;
+    open_path_blocking(path)
+}
+
+#[tauri::command]
+fn list_language_presets() -> Result<Vec<LanguagePresetInfo>, String> {
+    Ok(language_presets())
+}
+
+#[tauri::command]
+fn apply_language_preset(locale: String) -> Result<LanguageSettings, String> {
+    let settings = language_preset_settings(&locale)?;
+    save_language_settings(&settings)?;
     Ok(settings)
 }
 
@@ -311,6 +435,52 @@ fn open_path(path: String) -> Result<(), String> {
     open_path_blocking(PathBuf::from(path))
 }
 
+#[tauri::command]
+fn open_text_editor(path: String) -> Result<(), String> {
+    open_text_editor_blocking(PathBuf::from(path))
+}
+
+fn open_text_editor_blocking(path: PathBuf) -> Result<(), String> {
+    let path = prepare_editor_path(path)?;
+    let settings = load_app_settings()?;
+    let editor = settings.external_editor;
+    let command = editor.command.trim().to_string();
+    if command.is_empty() {
+        return Err(
+            "Text editor is not configured. Register it from Settings > Text Editor.".to_string(),
+        );
+    }
+
+    let mut args = editor.args;
+    if args.iter().any(|arg| arg.contains("{path}")) {
+        let path_text = path_to_string(&path);
+        for arg in &mut args {
+            *arg = arg.replace("{path}", &path_text);
+        }
+    } else {
+        args.push(path_to_string(&path));
+    }
+
+    Command::new(&command)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Launch text editor failed: {error}"))
+}
+
+fn prepare_editor_path(path: PathBuf) -> Result<PathBuf, String> {
+    let path = prepare_open_path(path)?;
+    let metadata =
+        fs::metadata(&path).map_err(|error| format_io_error("read editor target", &path, error))?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "Text editor target must be a local file: {}",
+            path_to_string(&path)
+        ));
+    }
+    Ok(path)
+}
+
 fn open_path_blocking(path: PathBuf) -> Result<(), String> {
     let path = prepare_open_path(path)?;
     spawn_open_command(&path).map_err(|error| format_io_error("open path", &path, error))
@@ -420,20 +590,224 @@ pub(crate) fn sort_entries(entries: &mut [FileEntry]) {
     });
 }
 
+fn language_file_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+    Submenu::with_items(
+        app,
+        "Language File",
+        true,
+        &[
+            &tauri::menu::MenuItem::with_id(app, MENU_LANGUAGE_EN, "English", true, None::<&str>)?,
+            &tauri::menu::MenuItem::with_id(app, MENU_LANGUAGE_JA, "Japanese", true, None::<&str>)?,
+            &tauri::menu::MenuItem::with_id(
+                app,
+                MENU_LANGUAGE_QUENYA,
+                "Quenya Latin",
+                true,
+                None::<&str>,
+            )?,
+        ],
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let pkg_info = app.package_info();
+    let config = app.config();
+    let about_metadata = AboutMetadata {
+        name: Some(pkg_info.name.clone()),
+        version: Some(pkg_info.version.to_string()),
+        copyright: config.bundle.copyright.clone(),
+        authors: config
+            .bundle
+            .publisher
+            .clone()
+            .map(|publisher| vec![publisher]),
+        ..Default::default()
+    };
+
+    let language_menu = language_file_menu(app)?;
+
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                pkg_info.name.clone(),
+                true,
+                &[
+                    &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &tauri::menu::MenuItem::with_id(
+                        app,
+                        MENU_OPEN_CONFIG_DIRECTORY,
+                        "Preferences...",
+                        true,
+                        Some("CmdOrCtrl+,"),
+                    )?,
+                    &language_menu,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::services(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, None)?,
+                    &PredefinedMenuItem::hide_others(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "View",
+                true,
+                &[&PredefinedMenuItem::fullscreen(app, None)?],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Window",
+                true,
+                &[
+                    &PredefinedMenuItem::minimize(app, None)?,
+                    &PredefinedMenuItem::maximize(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::close_window(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(app, "Help", true, &[])?,
+        ],
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let language_menu = language_file_menu(app)?;
+    let settings_menu = Submenu::with_items(
+        app,
+        "Settings",
+        true,
+        &[
+            &tauri::menu::MenuItem::with_id(
+                app,
+                MENU_OPEN_CONFIG_DIRECTORY,
+                "Preferences...",
+                true,
+                Some("Ctrl+,"),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &language_menu,
+        ],
+    )?;
+
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                "File",
+                true,
+                &[
+                    &PredefinedMenuItem::close_window(app, None)?,
+                    &PredefinedMenuItem::quit(app, None)?,
+                ],
+            )?,
+            &settings_menu,
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(app, "Help", true, &[])?,
+        ],
+    )
+}
+
+fn handle_app_menu_event(app: &tauri::AppHandle, event_id: &str) {
+    let result = match event_id {
+        MENU_OPEN_CONFIG_DIRECTORY => app
+            .emit("preferences-open", ())
+            .map_err(|error| format!("Open preferences failed: {error}")),
+        MENU_LANGUAGE_EN => apply_language_preset("en".to_string()).map(|_| ()),
+        MENU_LANGUAGE_JA => apply_language_preset("ja".to_string()).map(|_| ()),
+        MENU_LANGUAGE_QUENYA => apply_language_preset("qya-Latn".to_string()).map(|_| ()),
+        _ => Ok(()),
+    };
+    if let Err(error) = result {
+        eprintln!("menu action failed ({event_id}): {error}");
+    }
+}
+
+fn startup_safe_mode_requested() -> bool {
+    env::var("WINDY_SAFE_MODE")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+        || env::args().any(|arg| arg == "--safe-mode")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let startup_safe_mode_status = if startup_safe_mode_requested() {
+        match enter_safe_mode_blocking("safe-mode-startup") {
+            Ok(status) => status,
+            Err(error) => SafeModeStatus {
+                active: false,
+                backup_paths: Vec::new(),
+                message: format!("Safe Mode startup failed: {error}"),
+            },
+        }
+    } else {
+        SafeModeStatus::default()
+    };
+
+    if let Err(error) = tauri::Builder::default()
+        .menu(build_app_menu)
+        .on_menu_event(|app, event| {
+            handle_app_menu_event(app, event.id().as_ref());
+        })
         .manage(TerminalState::default())
         .manage(SftpState::default())
         .manage(OperationCancellationState::default())
         .manage(DetailedDiffCancellationState::default())
+        .manage(SafeModeState(Mutex::new(startup_safe_mode_status)))
         .invoke_handler(tauri::generate_handler![
             home_directory,
             list_local_roots,
             get_app_settings,
             get_appearance_settings,
             get_keybind_settings,
+            get_language_settings,
             save_app_settings,
+            save_appearance_settings,
+            save_keybind_settings,
+            reset_app_settings,
+            reset_appearance_settings,
+            reset_keybind_settings,
+            reset_language_settings,
+            enter_safe_mode,
+            get_safe_mode_status,
+            open_config_directory,
+            list_language_presets,
+            apply_language_preset,
             parent_directory,
             root_directory,
             list_directory,
@@ -457,6 +831,7 @@ pub fn run() {
             delete_sftp_connection_profile,
             list_external_commands,
             open_path,
+            open_text_editor,
             read_image_file,
             read_archive_image_file,
             read_text_file,
@@ -471,7 +846,9 @@ pub fn run() {
             save_operation_failure_log
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    {
+        eprintln!("error while running tauri application: {error}");
+    }
 }
 
 #[cfg(test)]
@@ -552,7 +929,7 @@ mod tests {
         fs::write(root.join("b.txt"), "b").unwrap();
         fs::write(root.join("a.txt"), "a").unwrap();
 
-        let listing = list_directory(path_to_string(&root)).unwrap();
+        let listing = list_directory(path_to_string(root)).unwrap();
         let names: Vec<_> = listing
             .entries
             .iter()
@@ -568,7 +945,7 @@ mod tests {
         let root = root.path();
         fs::write(root.join(".hidden"), "hidden").unwrap();
 
-        let listing = list_directory(path_to_string(&root)).unwrap();
+        let listing = list_directory(path_to_string(root)).unwrap();
         let hidden = listing
             .entries
             .iter()
@@ -1167,7 +1544,7 @@ mod tests {
         assert!(listing
             .entries
             .iter()
-            .any(|entry| PathBuf::from(&entry.path) == nested_path));
+            .any(|entry| Path::new(&entry.path) == nested_path.as_path()));
         assert!(listing.query_label.contains("recursive"));
     }
 
@@ -1554,6 +1931,10 @@ mod tests {
                 ..OperationResultSettings::default()
             },
             operation_cancel: Default::default(),
+            external_editor: ExternalEditorSettings {
+                command: "code".to_string(),
+                args: vec!["--reuse-window".to_string(), "{path}".to_string()],
+            },
             sftp_session: SftpSessionSettings::default(),
             sftp_transfer: Default::default(),
         };
@@ -1561,6 +1942,76 @@ mod tests {
         let loaded = load_app_settings_from_dir(root.path()).context("reload operation settings");
         assert!(!loaded.use_trash);
         assert!(loaded.operation_result.print_to_terminal);
+        assert_eq!(loaded.external_editor.command, "code");
+    }
+
+    #[test]
+    fn settings_backup_and_reset_defaults_preserves_backup_copy() {
+        let root = temp_dir();
+        let settings = AppSettings {
+            use_trash: false,
+            operation_result: OperationResultSettings {
+                print_to_terminal: true,
+                ..OperationResultSettings::default()
+            },
+            operation_cancel: Default::default(),
+            external_editor: ExternalEditorSettings {
+                command: "code".to_string(),
+                args: vec!["{path}".to_string()],
+            },
+            sftp_session: SftpSessionSettings::default(),
+            sftp_transfer: Default::default(),
+        };
+        save_app_settings_to_dir(root.path(), &settings).context("save modified settings");
+
+        let backups = backup_settings_files_from_dir(root.path(), "safe-mode-test")
+            .context("backup settings");
+        assert!(!backups.is_empty());
+        assert!(backups
+            .iter()
+            .any(|path| path.ends_with("settings/operation.json")));
+        assert!(read_to_string(
+            backups
+                .iter()
+                .find(|path| path.ends_with("settings/operation.json"))
+                .unwrap()
+        )
+        .contains("\"useTrash\": false"));
+
+        reset_all_settings_to_defaults_in_dir(root.path()).context("reset settings");
+        let loaded = load_app_settings_from_dir(root.path()).context("load reset settings");
+        assert!(loaded.use_trash);
+        assert!(loaded.external_editor.command.is_empty());
+    }
+
+    #[test]
+    fn keybind_settings_merge_new_defaults_into_existing_file() {
+        let root = temp_dir();
+        let path = root.path().join("keybind.json");
+        fs::write(
+            &path,
+            r#"{"schemaVersion":1,"bindings":{"pane.focusTerminal":["z"]},"lockedBindings":{"dialog.confirm":["enter"]}}"#,
+        )
+        .unwrap();
+
+        let loaded = crate::config::load_keybind_settings_from_path(&path)
+            .context("load partial keybind settings");
+
+        assert_eq!(
+            loaded.bindings.get("pane.focusTerminal"),
+            Some(&vec!["z".to_string()])
+        );
+        assert_eq!(
+            loaded.bindings.get("filter.startInline"),
+            Some(&vec!["/".to_string()])
+        );
+        assert_eq!(
+            loaded.bindings.get("file.deletePermanently"),
+            Some(&vec!["shift+delete".to_string()])
+        );
+        let saved = read_to_string(&path);
+        assert!(saved.contains("filter.startInline"));
+        assert!(saved.contains("file.deletePermanently"));
     }
 
     #[test]
@@ -1589,6 +2040,7 @@ mod tests {
         let content = read_to_string(&root.path().join("settings/operation.json"));
         assert!(content.contains("operationResult"));
         assert!(content.contains("printToTerminal"));
+        assert!(content.contains("externalEditor"));
     }
 
     #[test]
@@ -1599,6 +2051,7 @@ mod tests {
 
         let appearance = read_to_string(&root.path().join("settings/appearance.json"));
         assert!(appearance.contains("uiFamily"));
+        assert!(appearance.contains("fileRowHeight"));
         assert!(appearance.contains("terminal.background"));
         assert!(appearance.contains("dialog.inputBackground"));
         assert!(appearance.contains("entry.filterKeptBackground"));
@@ -1610,6 +2063,9 @@ mod tests {
         assert!(keybind.contains("bindings"));
         assert!(keybind.contains("lockedBindings"));
         assert!(keybind.contains("pane.moveUpAlternative"));
+        assert!(keybind.contains("filter.startInline"));
+        assert!(keybind.contains("file.deletePermanently"));
+        assert!(keybind.contains("terminal.scrollLineUp"));
         assert!(keybind.contains("dialog.confirm"));
 
         let language = read_to_string(&root.path().join("settings/language.json"));
@@ -1630,9 +2086,11 @@ mod tests {
         assert!(loaded.operation_result.show_failure_dialog);
         assert!(!loaded.operation_result.print_to_terminal);
         assert!(loaded.operation_result.save_failure_log);
+        assert!(loaded.external_editor.command.is_empty());
 
         let content = read_to_string(&path);
         assert!(content.contains("operationResult"));
+        assert!(content.contains("externalEditor"));
         assert!(content.contains("sftpSession"));
     }
 
@@ -1730,7 +2188,7 @@ mod tests {
 
         assert_eq!(
             parent_directory(path_to_string(&child)).unwrap(),
-            Some(path_to_string(&root))
+            Some(path_to_string(root))
         );
     }
 
@@ -1763,7 +2221,7 @@ mod tests {
         fs::write(&target_file, "target").unwrap();
         symlink(&target_file, &link_file).unwrap();
 
-        let listing = list_directory(path_to_string(&root)).unwrap();
+        let listing = list_directory(path_to_string(root)).unwrap();
         let symlink_entry = listing
             .entries
             .iter()
@@ -2043,7 +2501,7 @@ mod tests {
         let mkdir_result = execute_file_operation_job_blocking(FileOperationJob {
             id: None,
             kind: FileOperationKind::Mkdir,
-            destination_path: Some(path_to_string(&root)),
+            destination_path: Some(path_to_string(root)),
             targets: vec![],
             requested_name: Some("created".to_string()),
             sftp_safe_transfer_part_threshold_bytes: None,
@@ -2054,7 +2512,7 @@ mod tests {
         let rename_result = execute_file_operation_job_blocking(FileOperationJob {
             id: None,
             kind: FileOperationKind::Rename,
-            destination_path: Some(path_to_string(&root)),
+            destination_path: Some(path_to_string(root)),
             targets: vec![target(&file)],
             requested_name: Some("after.txt".to_string()),
             sftp_safe_transfer_part_threshold_bytes: None,
@@ -2069,7 +2527,7 @@ mod tests {
         let create_file_result = execute_file_operation_job_blocking(FileOperationJob {
             id: None,
             kind: FileOperationKind::CreateFile,
-            destination_path: Some(path_to_string(&root)),
+            destination_path: Some(path_to_string(root)),
             targets: vec![],
             requested_name: Some("empty.txt".to_string()),
             sftp_safe_transfer_part_threshold_bytes: None,

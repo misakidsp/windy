@@ -30,6 +30,10 @@ export function openPathWithDefaultApp(invoke: TauriInvoke, path: string): Promi
   return invokeCommand<void>(invoke, "open_path", { path });
 }
 
+export function openPathWithTextEditor(invoke: TauriInvoke, path: string): Promise<void> {
+  return invokeCommand<void>(invoke, "open_text_editor", { path });
+}
+
 export function compareLocalDirectoriesDetailed(
   invoke: TauriInvoke,
   jobId: string,

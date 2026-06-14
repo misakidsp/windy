@@ -27,6 +27,7 @@ export type AppSettings = {
   useTrash: boolean;
   operationResult: OperationResultSettings;
   operationCancel: OperationCancelSettings;
+  externalEditor: ExternalEditorSettings;
   sftpSession: SftpSessionSettings;
   sftpTransfer: SftpTransferSettings;
 };
@@ -41,6 +42,11 @@ export type OperationResultSettings = {
 export type OperationCancelSettings = {
   doubleEscEnabled: boolean;
   doubleEscWindowMs: number;
+};
+
+export type ExternalEditorSettings = {
+  command: string;
+  args: string[];
 };
 
 export type SftpSessionLifecycle = "disconnectOnLeave" | "keepRecent" | "manual";
@@ -58,6 +64,7 @@ export type SftpTransferSettings = {
 export type AppearanceSettings = {
   schemaVersion: number;
   fonts: AppearanceFontSettings;
+  layout: AppearanceLayoutSettings;
   colors: Record<string, string>;
   extensionColors: Record<string, string>;
 };
@@ -70,10 +77,31 @@ export type AppearanceFontSettings = {
   viewerSize: number;
 };
 
+export type AppearanceLayoutSettings = {
+  fileRowHeight: number;
+};
+
 export type KeybindSettings = {
   schemaVersion: number;
   bindings: Record<string, string[]>;
   lockedBindings: Record<string, string[]>;
+};
+
+export type LanguageSettings = {
+  schemaVersion: number;
+  locale: string;
+  messages: Record<string, string>;
+};
+
+export type LanguagePresetInfo = {
+  locale: string;
+  name: string;
+};
+
+export type SafeModeStatus = {
+  active: boolean;
+  backupPaths: string[];
+  message: string;
 };
 
 export type VisibleEntriesCache = {

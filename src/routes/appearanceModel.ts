@@ -1,6 +1,8 @@
 import type { AppearanceSettings } from "./types";
 
 const fallbackFontFamily = '"UDEV Gothic", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+const defaultFileRowHeight = 20;
+const minimumFileRowHeight = 16;
 
 export const defaultAppearanceSettings: AppearanceSettings = {
   schemaVersion: 1,
@@ -10,6 +12,9 @@ export const defaultAppearanceSettings: AppearanceSettings = {
     uiSize: 12,
     terminalSize: 12,
     viewerSize: 12,
+  },
+  layout: {
+    fileRowHeight: defaultFileRowHeight,
   },
   colors: {
     "app.background": "#181a1f",
@@ -82,6 +87,11 @@ export function fontFamilySetting(family: string): string {
   return `"${trimmed.replaceAll("\"", "\\\"")}", ${fallbackFontFamily}`;
 }
 
+export function fileRowHeightSetting(settings: AppearanceSettings): number {
+  const rowHeight = Math.trunc(settings.layout?.fileRowHeight ?? defaultFileRowHeight);
+  return Math.max(minimumFileRowHeight, rowHeight);
+}
+
 export function appearanceCssVariables(settings: AppearanceSettings): Record<string, string> {
   return {
     "--windy-font-family": fontFamilySetting(settings.fonts.uiFamily),
@@ -89,6 +99,7 @@ export function appearanceCssVariables(settings: AppearanceSettings): Record<str
     "--windy-ui-font-size": `${settings.fonts.uiSize}px`,
     "--windy-terminal-font-size": `${settings.fonts.terminalSize}px`,
     "--windy-viewer-font-size": `${settings.fonts.viewerSize}px`,
+    "--windy-file-row-height": `${fileRowHeightSetting(settings)}px`,
     "--windy-app-background": colorSetting(settings, "app.background"),
     "--windy-app-foreground": colorSetting(settings, "app.foreground"),
     "--windy-pane-background": colorSetting(settings, "pane.background"),

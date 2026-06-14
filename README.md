@@ -23,6 +23,7 @@ file previews, and basic SFTP operations in one Tauri desktop app.
 - Bottom terminal pane linked to file selections
 - Path copy and external command templates
 - SFTP connection profiles and local/SFTP transfer basics
+- Preferences UI for editor, keybinding, appearance, language, reset, and Safe Mode settings
 - macOS, Windows, and Linux oriented codebase
 
 ## Beta Status
@@ -31,8 +32,9 @@ This repository is a public beta snapshot of Windy.
 
 Known beta caveats:
 
-- The UI is optimized for keyboard use and intentionally does not support mouse
-  driven file operations.
+- File-pane operations are optimized for keyboard use and intentionally do not
+  support mouse-driven file operations. Preferences/settings UI supports mouse
+  operation for form controls such as color pickers.
 - SFTP support is intended for everyday lightweight transfers. For large or
   long-running transfers, use external tools such as `rsync`, `scp`, `sftp`, or
   `rclone` from the terminal.
@@ -95,6 +97,7 @@ Windy is designed around the keyboard.
 | `c` | Copy selected items to the other pane |
 | `m` | Move selected items to the other pane |
 | `r` | Rename |
+| `e` | Edit the focused local file with the configured text editor |
 | `d` / `delete` | Delete, using trash for local files |
 | `shift+delete` | Permanently delete |
 | `n d` | Create a directory |
@@ -109,6 +112,11 @@ Windy is designed around the keyboard.
 | `?` | Show key help |
 
 See the [User Guide](docs/USER_GUIDE.md) for a broader walkthrough.
+
+On macOS, open `Windy > Preferences...` from the application menu to configure
+the standard text editor, key bindings, colors, language file, reset actions,
+and Safe Mode. On Windows/Linux, use `Settings > Preferences...` from the
+window menu.
 
 ## Bundled Font
 

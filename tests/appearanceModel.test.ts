@@ -3,6 +3,7 @@ import {
   appearanceCssVariables,
   colorSetting,
   defaultAppearanceSettings,
+  fileRowHeightSetting,
   fontFamilySetting,
 } from "../src/routes/appearanceModel";
 
@@ -17,6 +18,9 @@ const variables = appearanceCssVariables({
     uiFamily: "My UI",
     uiSize: 14,
   },
+  layout: {
+    fileRowHeight: 24,
+  },
   colors: {
     ...defaultAppearanceSettings.colors,
     "app.background": "#000000",
@@ -24,7 +28,11 @@ const variables = appearanceCssVariables({
 });
 
 assert.equal(variables["--windy-ui-font-size"], "14px");
+assert.equal(variables["--windy-file-row-height"], "24px");
 assert.equal(variables["--windy-app-background"], "#000000");
 assert.equal(variables["--windy-dialog-input-background"], "#1f242c");
 assert.equal(variables["--windy-terminal-selection-background"], "#374151");
 assert.match(variables["--windy-font-family"], /^"My UI"/);
+
+assert.equal(fileRowHeightSetting(defaultAppearanceSettings), 20);
+assert.equal(fileRowHeightSetting({ ...defaultAppearanceSettings, layout: { fileRowHeight: 10 } }), 16);

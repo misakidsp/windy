@@ -27,7 +27,6 @@ export const showParentEntry = false;
 export const defaultConsoleHeightRatio = 0.22;
 export const moveCursorAfterSelection = true;
 export const defaultPageSize = 12;
-export const fileRowHeight = 20;
 export const virtualListOverscan = 8;
 export const largeSearchResultWarningThreshold = 5000;
 export const terminalRepeatDelayMs = 380;

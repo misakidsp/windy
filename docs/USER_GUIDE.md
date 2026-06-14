@@ -8,6 +8,10 @@ The screen is centered on two file panes. The bottom area is a terminal pane tha
 can receive selected paths and can be used for command-line work without leaving
 the app.
 
+File-pane operations are keyboard-first. Mouse-driven file operations are not
+supported, but Preferences/settings UI supports mouse operation for form
+controls such as color pickers.
+
 ## Navigation
 
 | Key | Action |
@@ -33,6 +37,7 @@ used.
 | `c` | Copy to the other pane |
 | `m` | Move to the other pane |
 | `r` | Rename |
+| `e` | Edit the focused local file with the configured text editor |
 | `d` / `delete` | Delete |
 | `shift+delete` | Permanently delete |
 | `n d` | Create a directory |
@@ -42,6 +47,11 @@ used.
 
 Local delete uses the operating system trash where supported. Permanent delete
 and SFTP delete do not use trash.
+
+`e` always targets the focused file only. Marked files are ignored. It works for
+entries that resolve to a local regular file, such as local, search, diff,
+operation result, and Git status entries. SFTP entries and archive entries are
+not edited directly.
 
 ## Viewer
 
@@ -55,6 +65,9 @@ Supported viewer types include:
 
 Unsupported files can be opened with the operating system default app using
 `shift+enter`.
+
+When the internal viewer is showing a local file, `e` opens that file in the
+configured text editor.
 
 ## Archives
 
@@ -144,6 +157,30 @@ Useful path-copy and terminal integration keys:
 | `ctrl+shift+y` | Insert selected local paths into the terminal |
 | `:` or `, x` | Open registered external commands |
 
+## Preferences
+
+Open Preferences from the application menu:
+
+- macOS: `Windy > Preferences...`
+- Windows/Linux: `Settings > Preferences...`
+
+Preferences can configure:
+
+- Standard text editor used by `e`
+- Key bindings
+- File-pane font size and UI colors
+- Extension colors with a color picker
+- Language file preset
+- Settings reset
+- Safe Mode
+
+The `Language File` menu can apply the bundled `English`, `Japanese`, and
+`Quenya Latin` presets to `settings/language.json`.
+
+Safe Mode backs up the current main settings and regenerates default general,
+appearance, keybinding, and language settings. It can be entered from
+Preferences, or at startup with `WINDY_SAFE_MODE=1` or `--safe-mode`.
+
 ## Settings Files
 
 Windy stores user settings in the operating system's app configuration
@@ -182,6 +219,38 @@ Example `settings/operation.json`:
   "operationCancel": {
     "doubleEscEnabled": true,
     "doubleEscWindowMs": 700
+  },
+  "externalEditor": {
+    "command": "",
+    "args": []
+  }
+}
+```
+
+`externalEditor` controls the editor launched by `e`. `command` is an
+executable name or path. `args` is an array where each item is passed as one
+argument. If an item contains `{path}`, Windy replaces it with the target file
+path. If `{path}` is not present, Windy appends the file path as the final
+argument.
+
+Example:
+
+```json
+{
+  "externalEditor": {
+    "command": "code",
+    "args": ["--reuse-window", "{path}"]
+  }
+}
+```
+
+On macOS, an app-based editor can be configured through `open`:
+
+```json
+{
+  "externalEditor": {
+    "command": "open",
+    "args": ["-a", "CotEditor", "{path}"]
   }
 }
 ```

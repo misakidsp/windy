@@ -4,23 +4,22 @@ import {
   listSftpDirectory,
   searchDirectory,
 } from "../src/routes/virtualDirectorySideEffects";
-import type { TauriInvoke } from "../src/routes/locationSideEffects";
 import type { SearchDirectoryRequest } from "../src/routes/types";
+import { createTauriInvokeMock, type InvokeCall } from "./tauriInvokeMock";
 
-const calls: { command: string; args?: Record<string, unknown> }[] = [];
-const invoke: TauriInvoke = async (command, args) => {
-  calls.push({ command, args });
+const calls: InvokeCall[] = [];
+const invoke = createTauriInvokeMock(calls, (command) => {
   if (command === "list_archive_directory") {
-    return { archivePath: "/tmp/a.zip", innerPath: "docs", displayPath: "a.zip::/docs", entries: [] } as never;
+    return { archivePath: "/tmp/a.zip", innerPath: "docs", displayPath: "a.zip::/docs", entries: [] };
   }
   if (command === "search_directory") {
-    return { rootPath: "/work", displayPath: "search:/work", queryLabel: "*", entries: [], truncated: false } as never;
+    return { rootPath: "/work", displayPath: "search:/work", queryLabel: "*", entries: [], truncated: false };
   }
   if (command === "list_sftp_directory") {
-    return { connectionId: "conn-1", displayName: "remote", remotePath: "/srv", displayPath: "sftp:/srv", entries: [] } as never;
+    return { connectionId: "conn-1", displayName: "remote", remotePath: "/srv", displayPath: "sftp:/srv", entries: [] };
   }
-  return undefined as never;
-};
+  return undefined;
+});
 
 const request: SearchDirectoryRequest = {
   rootPath: "/work",

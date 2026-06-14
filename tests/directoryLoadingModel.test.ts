@@ -25,6 +25,17 @@ const entry: FileEntry = {
   readonly: false,
   mode: null,
 };
+const directoryEntry: FileEntry = {
+  key: "/work/child",
+  name: "child",
+  path: "/work/child",
+  kind: "directory",
+  size: null,
+  modifiedAt: null,
+  hidden: false,
+  readonly: false,
+  mode: null,
+};
 const source = { kind: "local" as const, location: "/work", displayName: "/work" };
 const loaded = loadedEntriesPatch(source, "/work", [entry]);
 assert.equal(loaded.source, source);
@@ -39,6 +50,26 @@ assert.deepEqual([...(loaded.selectedKeys ?? [])], []);
 const emptyLoaded = loadedEntriesPatch(source, "/work", []);
 assert.equal(emptyLoaded.cursorKey, null);
 assert.equal(emptyLoaded.cursorIndex, -1);
+
+const preferredLoaded = loadedEntriesPatch(
+  source,
+  "/work",
+  [entry, directoryEntry],
+  "/work/child/",
+  [directoryEntry, entry],
+);
+assert.equal(preferredLoaded.cursorKey, "/work/child");
+assert.equal(preferredLoaded.cursorIndex, 0);
+
+const missingPreferredLoaded = loadedEntriesPatch(
+  source,
+  "/work",
+  [entry, directoryEntry],
+  "/work/missing",
+  [directoryEntry, entry],
+);
+assert.equal(missingPreferredLoaded.cursorKey, "/work/child");
+assert.equal(missingPreferredLoaded.cursorIndex, 0);
 
 const failed = failedEntriesPatch(source, "/missing", new Error("not found"));
 assert.equal(failed.source, source);

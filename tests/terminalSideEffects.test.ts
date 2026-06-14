@@ -6,15 +6,14 @@ import {
   stopTerminal,
   writeTerminalInput,
 } from "../src/routes/terminalSideEffects";
-import type { TauriInvoke } from "../src/routes/locationSideEffects";
+import { createTauriInvokeMock, type InvokeCall } from "./tauriInvokeMock";
 
-const calls: { command: string; args?: Record<string, unknown> }[] = [];
-const invoke: TauriInvoke = async (command, args) => {
-  calls.push({ command, args });
-  if (command === "start_terminal") return 10 as never;
-  if (command === "start_sftp_ssh_terminal") return 20 as never;
-  return undefined as never;
-};
+const calls: InvokeCall[] = [];
+const invoke = createTauriInvokeMock(calls, (command) => {
+  if (command === "start_terminal") return 10;
+  if (command === "start_sftp_ssh_terminal") return 20;
+  return undefined;
+});
 
 async function run(): Promise<void> {
   await resizeTerminal(invoke, { cols: 100, rows: 24 });

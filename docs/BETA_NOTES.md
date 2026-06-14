@@ -14,6 +14,11 @@ managers and can tolerate rough edges while the app is still stabilizing.
 - `shift+delete` permanently deletes local files.
 - SFTP delete is permanent because remote trash is not generally available.
 - Undo/redo is intentionally limited to selected safe operations.
+- Preferences includes reset actions. Reset backs up current settings under the
+  app configuration directory before restoring defaults.
+- Safe Mode backs up the current main settings and starts with default general,
+  appearance, keybinding, and language settings. Use it when a broken setting
+  prevents normal startup.
 
 ## Platform Notes
 
@@ -27,10 +32,15 @@ Platform-specific behavior can differ in these areas:
 - File permissions and attributes
 - SFTP and SSH tool availability
 - Code signing and installer packaging
+- Native menu placement for Preferences and language file switching
 
 macOS beta builds may be ad-hoc signed or unsigned unless a release explicitly
 states otherwise. If macOS blocks a beta build, check the release notes for the
 expected signing and quarantine status before running it.
+
+On macOS, Preferences is under `Windy > Preferences...`. On Windows/Linux, it is
+under `Settings > Preferences...`. Safe Mode can also be requested at startup
+with `WINDY_SAFE_MODE=1` or `--safe-mode`.
 
 ## SFTP Notes
 

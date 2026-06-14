@@ -10,9 +10,9 @@ import {
   sftpConnectionTestRequestFromForm,
   sftpProfileSaveRequestFromForm,
   testSftpConnection,
-  type TauriInvoke,
 } from "../src/routes/locationSideEffects";
 import type { SearchPaneSource, SftpConnectionForm } from "../src/routes/types";
+import { createTauriInvokeMock, type InvokeCall } from "./tauriInvokeMock";
 
 const form: SftpConnectionForm = {
   profileId: "profile-1",
@@ -97,18 +97,17 @@ assert.deepEqual(searchProfileSaveRequestFromSource(source), {
   readonlyMode: "any",
 });
 
-const calls: { command: string; args?: Record<string, unknown> }[] = [];
-const invoke: TauriInvoke = async (command, args) => {
-  calls.push({ command, args });
-  if (command === "list_local_favorite_profiles") return [{ id: "fav-1", name: "Work", path: "/work" }] as never;
-  if (command === "list_search_profiles") return [{ id: "search-1", name: "Rust", rootPath: "/work" }] as never;
-  if (command === "list_sftp_connection_profiles") return [{ id: "sftp-1", name: "Dev", host: "host" }] as never;
-  if (command === "save_sftp_connection_profile") return { id: "sftp-2", name: "dev", remotePath: "/srv", authKind: "privateKey" } as never;
-  if (command === "save_local_favorite_profile") return { id: "fav-2", name: "src", path: "/work/src" } as never;
-  if (command === "save_search_profile") return { id: "search-2", name: "work .*\\.rs" } as never;
-  if (command === "test_sftp_connection") return { connectionId: "conn-1", displayName: "dev", remotePath: "/srv", message: "ok" } as never;
-  return undefined as never;
-};
+const calls: InvokeCall[] = [];
+const invoke = createTauriInvokeMock(calls, (command) => {
+  if (command === "list_local_favorite_profiles") return [{ id: "fav-1", name: "Work", path: "/work" }];
+  if (command === "list_search_profiles") return [{ id: "search-1", name: "Rust", rootPath: "/work" }];
+  if (command === "list_sftp_connection_profiles") return [{ id: "sftp-1", name: "Dev", host: "host" }];
+  if (command === "save_sftp_connection_profile") return { id: "sftp-2", name: "dev", remotePath: "/srv", authKind: "privateKey" };
+  if (command === "save_local_favorite_profile") return { id: "fav-2", name: "src", path: "/work/src" };
+  if (command === "save_search_profile") return { id: "search-2", name: "work .*\\.rs" };
+  if (command === "test_sftp_connection") return { connectionId: "conn-1", displayName: "dev", remotePath: "/srv", message: "ok" };
+  return undefined;
+});
 
 async function run(): Promise<void> {
   const profiles = await loadLocationProfiles(invoke);

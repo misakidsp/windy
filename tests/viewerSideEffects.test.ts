@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { readViewerImageFile, readViewerTextFile } from "../src/routes/viewerSideEffects";
-import type { TauriInvoke } from "../src/routes/locationSideEffects";
+import { createTauriInvokeMock, type InvokeCall } from "./tauriInvokeMock";
 
-const calls: { command: string; args?: Record<string, unknown> }[] = [];
-const invoke: TauriInvoke = async (command, args) => {
-  calls.push({ command, args });
-  if (command.includes("image")) return { path: String(args?.path ?? ""), dataUrl: "data:image/png;base64,AA==", mimeType: "image/png" } as never;
-  return { path: String(args?.path ?? ""), content: "hello", encoding: "utf-8", truncated: false } as never;
-};
+const calls: InvokeCall[] = [];
+const invoke = createTauriInvokeMock(calls, (command, args) => {
+  if (command.includes("image")) return { path: String(args?.path ?? ""), dataUrl: "data:image/png;base64,AA==", mimeType: "image/png" };
+  return { path: String(args?.path ?? ""), content: "hello", encoding: "utf-8", truncated: false };
+});
 
 async function run(): Promise<void> {
   assert.equal((await readViewerTextFile(invoke, "/work/readme.md")).content, "hello");
