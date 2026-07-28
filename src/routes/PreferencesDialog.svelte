@@ -1,5 +1,15 @@
 <script lang="ts">
   import type { AppearanceSettings, AppSettings, KeybindSettings, LanguagePresetInfo, LanguageSettings } from "./types";
+  import type { Translate } from "./localization";
+  import { keyHelpCommandLabel } from "./keyHelpModel";
+  import {
+    keybindingEditorText,
+    parseKeybindingEditorText,
+    validateKeybindingScopes,
+    type KeybindingValidationIssue,
+  } from "./keybindingEditorModel";
+  import { paneKeybindingCommandIds } from "./keyboardModel";
+  import { terminalKeybindingCommandIds } from "./terminalKeyHandling";
 
   type Section = "general" | "keybindings" | "appearance" | "language" | "reset";
   type ResetTarget = "app" | "appearance" | "keybind" | "language";
@@ -20,6 +30,12 @@
   export let onApplyLanguagePreset: (locale: string) => Promise<void>;
   export let onReset: (target: ResetTarget) => Promise<void>;
   export let onEnterSafeMode: () => Promise<void>;
+  export let t: Translate = (id, values) => {
+    if (!values) return id;
+    return id.replace(/\{([a-zA-Z0-9_.-]+)\}/g, (match, key) => (
+      values[key] === undefined ? match : String(values[key])
+    ));
+  };
 
   let section: Section = "general";
   let editorCommand = appSettings.externalEditor.command;
@@ -40,8 +56,9 @@
   let newExtensionColor = "#94a3b8";
   let keybindingEntries = Object.entries(keybindSettings.bindings).map(([command, keys]) => ({
     command,
-    keys: keys.join(", "),
+    keys: keybindingEditorText(keys),
   }));
+  let keybindingValidationError = "";
   let languageLocale = languageSettings.locale;
   let pendingReset: ResetTarget | null = null;
   let safeModeConfirmOpen = false;
@@ -76,8 +93,9 @@
   $: if (keybindSettings !== lastKeybindSettings) {
     keybindingEntries = Object.entries(keybindSettings.bindings).map(([command, keys]) => ({
       command,
-      keys: keys.join(", "),
+      keys: keybindingEditorText(keys),
     }));
+    keybindingValidationError = "";
     lastKeybindSettings = keybindSettings;
   }
 
@@ -92,13 +110,6 @@
     return value
       .split("\n")
       .map((line) => line.trim())
-      .filter(Boolean);
-  }
-
-  function splitKeys(value: string): string[] {
-    return value
-      .split(",")
-      .map((key) => key.trim())
       .filter(Boolean);
   }
 
@@ -117,6 +128,12 @@
 
   function activeColorEntries(): { key: string; value: string }[] {
     return activeColorScope === "colors" ? colorEntries : extensionColorEntries;
+  }
+
+  function languagePresetLabel(preset: LanguagePresetInfo): string {
+    const id = `preferences.languagePreset.${preset.locale}`;
+    const label = t(id);
+    return label === id ? preset.name : label;
   }
 
   function activeColorEntry(): { key: string; value: string } | undefined {
@@ -190,11 +207,43 @@
   }
 
   async function saveKeybindings(): Promise<void> {
+    const bindings = Object.fromEntries(
+      keybindingEntries.map((entry) => [entry.command, parseKeybindingEditorText(entry.keys)]),
+    );
+    const issue = validateKeybindingScopes(
+      bindings,
+      keybindSettings.lockedBindings,
+      [paneKeybindingCommandIds, terminalKeybindingCommandIds],
+    );
+    if (issue) {
+      keybindingValidationError = keybindingValidationMessage(issue);
+      return;
+    }
+    keybindingValidationError = "";
     await onSaveKeybindSettings({
       ...keybindSettings,
-      bindings: Object.fromEntries(
-        keybindingEntries.map((entry) => [entry.command, splitKeys(entry.keys)]),
-      ),
+      bindings,
+    });
+  }
+
+  function keybindingValidationMessage(issue: KeybindingValidationIssue): string {
+    if (issue.kind === "unsupportedSequence") {
+      return t("preferences.keybindingUnsupportedSequence", {
+        binding: issue.binding,
+        command: issue.command,
+      });
+    }
+    if (issue.kind === "prefixConflict") {
+      return t("preferences.keybindingPrefixConflict", {
+        binding: issue.binding,
+        first: issue.firstCommand,
+        second: issue.secondCommand,
+      });
+    }
+    return t("preferences.keybindingDuplicate", {
+      binding: issue.binding,
+      first: issue.firstCommand,
+      second: issue.secondCommand,
     });
   }
 
@@ -230,19 +279,19 @@
   <div class="preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
     <header class="preferences-header">
       <div>
-        <div id="preferences-title" class="preferences-title">Preferences</div>
-        <div class="preferences-subtitle">Windy settings</div>
+        <div id="preferences-title" class="preferences-title">{t("preferences.title")}</div>
+        <div class="preferences-subtitle">{t("preferences.subtitle")}</div>
       </div>
-      <button type="button" class="icon-button" aria-label="Close preferences" onclick={onClose}>x</button>
+      <button type="button" class="icon-button" aria-label={t("preferences.closeLabel")} onclick={onClose}>x</button>
     </header>
 
     <div class="preferences-body">
-      <nav class="preferences-nav" aria-label="Preference sections">
-        <button class:active={section === "general"} type="button" onclick={() => (section = "general")}>General</button>
-        <button class:active={section === "keybindings"} type="button" onclick={() => (section = "keybindings")}>Keybindings</button>
-        <button class:active={section === "appearance"} type="button" onclick={() => (section = "appearance")}>Appearance</button>
-        <button class:active={section === "language"} type="button" onclick={() => (section = "language")}>Language</button>
-        <button class:active={section === "reset"} type="button" onclick={() => (section = "reset")}>Reset</button>
+      <nav class="preferences-nav" aria-label={t("preferences.sectionsLabel")}>
+        <button class:active={section === "general"} type="button" onclick={() => (section = "general")}>{t("preferences.general")}</button>
+        <button class:active={section === "keybindings"} type="button" onclick={() => (section = "keybindings")}>{t("preferences.keybindings")}</button>
+        <button class:active={section === "appearance"} type="button" onclick={() => (section = "appearance")}>{t("preferences.appearance")}</button>
+        <button class:active={section === "language"} type="button" onclick={() => (section = "language")}>{t("preferences.language")}</button>
+        <button class:active={section === "reset"} type="button" onclick={() => (section = "reset")}>{t("preferences.reset")}</button>
       </nav>
 
       <section class="preferences-panel">
@@ -252,65 +301,78 @@
 
         {#if section === "general"}
           <div class="section-heading">
-            <h2>General</h2>
-            <button type="button" onclick={saveGeneral} disabled={loading}>Save</button>
+            <h2>{t("preferences.general")}</h2>
+            <button type="button" onclick={saveGeneral} disabled={loading}>{t("dialog.save")}</button>
           </div>
           <label class="checkbox-row">
             <input type="checkbox" checked={useTrash} onchange={(event) => (useTrash = event.currentTarget.checked)} />
-            <span>Use Trash for local delete</span>
+            <span>{t("preferences.useTrash")}</span>
           </label>
           <label>
-            <span>Default text editor command</span>
-            <input bind:value={editorCommand} placeholder="code, vim, notepad.exe" spellcheck="false" autocomplete="off" />
+            <span>{t("preferences.editorCommand")}</span>
+            <input bind:value={editorCommand} placeholder={t("preferences.editorCommandPlaceholder")} spellcheck="false" autocomplete="off" />
           </label>
           <label>
-            <span>Editor arguments, one per line</span>
+            <span>{t("preferences.editorArgs")}</span>
             <textarea bind:value={editorArgs} spellcheck="false" autocomplete="off" rows="5"></textarea>
           </label>
           <button type="button" class="secondary-button" onclick={onOpenConfigDirectory} disabled={loading}>
-            Open Config Directory
+            {t("preferences.openConfigDirectory")}
           </button>
         {:else if section === "keybindings"}
           <div class="section-heading">
-            <h2>Keybindings</h2>
-            <button type="button" onclick={saveKeybindings} disabled={loading}>Save</button>
+            <h2>{t("preferences.keybindings")}</h2>
+            <button type="button" onclick={saveKeybindings} disabled={loading}>{t("dialog.save")}</button>
           </div>
+          {#if keybindingValidationError}
+            <div class="preferences-error">{keybindingValidationError}</div>
+          {/if}
           <div class="scroll-table">
             {#each keybindingEntries as entry, index (entry.command)}
               <label class="table-row">
-                <span>{entry.command}</span>
-                <input
+                <span>
+                  {keyHelpCommandLabel(entry.command, t)}
+                  <code>{entry.command}</code>
+                </span>
+                <textarea
                   value={entry.keys}
                   spellcheck="false"
                   autocomplete="off"
+                  rows="2"
                   oninput={(event) => (keybindingEntries[index].keys = event.currentTarget.value)}
-                />
+                ></textarea>
               </label>
             {/each}
           </div>
-          <h3>Locked Bindings</h3>
+          <h3>{t("preferences.lockedBindings")}</h3>
           <div class="locked-list">
             {#each Object.entries(keybindSettings.lockedBindings) as [command, keys]}
-              <div><span>{command}</span><code>{keys.join(", ")}</code></div>
+              <div>
+                <span>
+                  {keyHelpCommandLabel(command, t)}
+                  <code>{command}</code>
+                </span>
+                <code>{keys.join(", ")}</code>
+              </div>
             {/each}
           </div>
         {:else if section === "appearance"}
           <div class="section-heading">
-            <h2>Appearance</h2>
-            <button type="button" onclick={saveAppearance} disabled={loading}>Save</button>
+            <h2>{t("preferences.appearance")}</h2>
+            <button type="button" onclick={saveAppearance} disabled={loading}>{t("dialog.save")}</button>
           </div>
           <div class="field-grid">
-            <label><span>UI font</span><input bind:value={uiFamily} spellcheck="false" autocomplete="off" /></label>
-            <label><span>Terminal font</span><input bind:value={terminalFamily} spellcheck="false" autocomplete="off" /></label>
-            <label><span>UI size</span><input bind:value={uiSize} inputmode="numeric" /></label>
-            <label><span>Terminal size</span><input bind:value={terminalSize} inputmode="numeric" /></label>
-            <label><span>Viewer size</span><input bind:value={viewerSize} inputmode="numeric" /></label>
-            <label><span>File row height</span><input bind:value={fileRowHeight} inputmode="numeric" /></label>
+            <label><span>{t("preferences.uiFont")}</span><input bind:value={uiFamily} spellcheck="false" autocomplete="off" /></label>
+            <label><span>{t("preferences.terminalFont")}</span><input bind:value={terminalFamily} spellcheck="false" autocomplete="off" /></label>
+            <label><span>{t("preferences.uiSize")}</span><input bind:value={uiSize} inputmode="numeric" /></label>
+            <label><span>{t("preferences.terminalSize")}</span><input bind:value={terminalSize} inputmode="numeric" /></label>
+            <label><span>{t("preferences.viewerSize")}</span><input bind:value={viewerSize} inputmode="numeric" /></label>
+            <label><span>{t("preferences.fileRowHeight")}</span><input bind:value={fileRowHeight} inputmode="numeric" /></label>
           </div>
-          <h3>Colors</h3>
+          <h3>{t("preferences.colors")}</h3>
           <div class="color-workspace">
-            <div class="color-list" aria-label="Color settings">
-              <div class="color-list-heading">Interface</div>
+            <div class="color-list" aria-label={t("preferences.colorSettingsLabel")}>
+              <div class="color-list-heading">{t("preferences.interfaceColors")}</div>
               {#each colorEntries as entry (entry.key)}
                 <button
                   type="button"
@@ -322,7 +384,7 @@
                   <span>{entry.key}</span>
                 </button>
               {/each}
-              <div class="color-list-heading extension-heading">Extensions</div>
+              <div class="color-list-heading extension-heading">{t("preferences.extensionColors")}</div>
               {#each extensionColorEntries as entry (entry.key)}
                 <button
                   type="button"
@@ -344,7 +406,7 @@
                   <code>{selectedColorEntry.value}</code>
                 </div>
                 <label class="picker-row">
-                  <span>Color picker</span>
+                  <span>{t("preferences.colorPicker")}</span>
                   <input
                     type="color"
                     value={colorInputValue(selectedColorEntry.value)}
@@ -352,7 +414,7 @@
                   />
                 </label>
                 <label>
-                  <span>Hex value</span>
+                  <span>{t("preferences.hexValue")}</span>
                   <input
                     value={selectedColorEntry.value}
                     spellcheck="false"
@@ -360,13 +422,13 @@
                     oninput={(event) => updateActiveColor(event.currentTarget.value)}
                   />
                 </label>
-                <div class="preset-grid" aria-label="Preset colors">
+                <div class="preset-grid" aria-label={t("preferences.presetColorsLabel")}>
                   {#each presetColors as color}
                     <button
                       type="button"
                       class="preset-swatch"
                       style={`background: ${color}`}
-                      aria-label={`Set ${color}`}
+                      aria-label={t("preferences.setColor", { color })}
                       title={color}
                       onclick={() => updateActiveColor(color)}
                     ></button>
@@ -374,61 +436,60 @@
                 </div>
                 {#if activeColorScope === "extensionColors"}
                   <button type="button" class="secondary-button danger-button" onclick={removeActiveExtensionColor}>
-                    Remove Extension Color
+                    {t("preferences.removeExtensionColor")}
                   </button>
                 {/if}
               {:else}
-                <div class="note">Select a color item from the list.</div>
+                <div class="note">{t("preferences.selectColorItem")}</div>
               {/if}
 
               <div class="extension-add">
-                <h3>Add Extension Color</h3>
+                <h3>{t("preferences.addExtensionColor")}</h3>
                 <label>
-                  <span>Extension</span>
-                  <input bind:value={newExtensionKey} placeholder="md" spellcheck="false" autocomplete="off" />
+                  <span>{t("preferences.extension")}</span>
+                  <input bind:value={newExtensionKey} placeholder={t("preferences.extensionPlaceholder")} spellcheck="false" autocomplete="off" />
                 </label>
                 <label class="picker-row">
-                  <span>Color</span>
+                  <span>{t("preferences.color")}</span>
                   <input type="color" bind:value={newExtensionColor} />
                 </label>
-                <button type="button" onclick={addExtensionColor}>Add or Update</button>
+                <button type="button" onclick={addExtensionColor}>{t("preferences.addOrUpdate")}</button>
               </div>
             </div>
           </div>
         {:else if section === "language"}
           <div class="section-heading">
-            <h2>Language File</h2>
-            <button type="button" onclick={() => onApplyLanguagePreset(languageLocale)} disabled={loading}>Apply</button>
+            <h2>{t("preferences.languageFile")}</h2>
+            <button type="button" onclick={() => onApplyLanguagePreset(languageLocale)} disabled={loading}>{t("dialog.apply")}</button>
           </div>
           <label>
-            <span>Preset</span>
+            <span>{t("preferences.preset")}</span>
             <select bind:value={languageLocale}>
               {#each languagePresets as preset}
-                <option value={preset.locale}>{preset.name}</option>
+                <option value={preset.locale}>{languagePresetLabel(preset)}</option>
               {/each}
             </select>
           </label>
-          <div class="note">Current locale: {languageSettings.locale}</div>
-          <div class="note">Language files currently cover extracted message strings only.</div>
+          <div class="note">{t("preferences.currentLocale", { locale: languageSettings.locale })}</div>
+          <div class="note">{t("preferences.languageCoverageNote")}</div>
         {:else}
           <div class="section-heading">
-            <h2>Reset</h2>
+            <h2>{t("preferences.reset")}</h2>
           </div>
           <div class="reset-actions">
-            <button type="button" onclick={() => (pendingReset = "app")} disabled={loading}>Reset General</button>
-            <button type="button" onclick={() => (pendingReset = "keybind")} disabled={loading}>Reset Keybindings</button>
-            <button type="button" onclick={() => (pendingReset = "appearance")} disabled={loading}>Reset Appearance</button>
-            <button type="button" onclick={() => (pendingReset = "language")} disabled={loading}>Reset Language</button>
+            <button type="button" onclick={() => (pendingReset = "app")} disabled={loading}>{t("preferences.resetGeneral")}</button>
+            <button type="button" onclick={() => (pendingReset = "keybind")} disabled={loading}>{t("preferences.resetKeybindings")}</button>
+            <button type="button" onclick={() => (pendingReset = "appearance")} disabled={loading}>{t("preferences.resetAppearance")}</button>
+            <button type="button" onclick={() => (pendingReset = "language")} disabled={loading}>{t("preferences.resetLanguage")}</button>
           </div>
-          <div class="note">Reset backs up current config files, then writes defaults for the selected area.</div>
+          <div class="note">{t("preferences.resetNote")}</div>
           <div class="safe-mode-box">
-            <h3>Safe Mode</h3>
+            <h3>{t("preferences.safeMode")}</h3>
             <div class="note">
-              Safe Mode backs up current config files and reloads defaults for General, Appearance,
-              Keybindings, and Language.
+              {t("preferences.safeModeNote")}
             </div>
             <button type="button" class="danger-button" onclick={() => (safeModeConfirmOpen = true)} disabled={loading}>
-              Enter Safe Mode
+              {t("preferences.enterSafeMode")}
             </button>
           </div>
         {/if}
@@ -436,19 +497,19 @@
     </div>
 
     <footer class="preferences-footer">
-      <span>{loading ? "Working..." : "Esc closes preferences"}</span>
-      <button type="button" onclick={onClose}>Close</button>
+      <span>{loading ? t("dialog.working") : t("preferences.footerHint")}</span>
+      <button type="button" onclick={onClose}>{t("dialog.close")}</button>
     </footer>
   </div>
 
   {#if pendingReset}
     <div class="nested-confirm" role="dialog" aria-modal="true" aria-labelledby="reset-confirm-title">
       <div class="nested-confirm-dialog">
-        <h2 id="reset-confirm-title">Reset Settings</h2>
-        <p>Back up current config files and reset this setting group to defaults?</p>
+        <h2 id="reset-confirm-title">{t("preferences.resetSettingsTitle")}</h2>
+        <p>{t("preferences.resetConfirm")}</p>
         <div class="confirm-actions">
-          <button type="button" onclick={() => (pendingReset = null)}>Cancel</button>
-          <button type="button" class="danger-button" onclick={confirmReset} disabled={loading}>Reset</button>
+          <button type="button" onclick={() => (pendingReset = null)}>{t("dialog.cancel")}</button>
+          <button type="button" class="danger-button" onclick={confirmReset} disabled={loading}>{t("dialog.reset")}</button>
         </div>
       </div>
     </div>
@@ -457,11 +518,11 @@
   {#if safeModeConfirmOpen}
     <div class="nested-confirm" role="dialog" aria-modal="true" aria-labelledby="safe-mode-confirm-title">
       <div class="nested-confirm-dialog">
-        <h2 id="safe-mode-confirm-title">Enter Safe Mode</h2>
-        <p>Back up current config files and reload default settings now?</p>
+        <h2 id="safe-mode-confirm-title">{t("preferences.enterSafeMode")}</h2>
+        <p>{t("preferences.safeModeConfirm")}</p>
         <div class="confirm-actions">
-          <button type="button" onclick={() => (safeModeConfirmOpen = false)}>Cancel</button>
-          <button type="button" class="danger-button" onclick={confirmSafeMode} disabled={loading}>Enter Safe Mode</button>
+          <button type="button" onclick={() => (safeModeConfirmOpen = false)}>{t("dialog.cancel")}</button>
+          <button type="button" class="danger-button" onclick={confirmSafeMode} disabled={loading}>{t("preferences.enterSafeMode")}</button>
         </div>
       </div>
     </div>

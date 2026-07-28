@@ -1,7 +1,15 @@
 <script lang="ts">
   import type { OperationResultSnapshot } from "./types";
+  import type { Translate } from "./localization";
+  import { operationResultItemMessage } from "./operationResultModel";
 
   export let snapshot: OperationResultSnapshot;
+  export let t: Translate = (id, values) => {
+    if (!values) return id;
+    return id.replace(/\{([a-zA-Z0-9_.-]+)\}/g, (match, key) => (
+      values[key] === undefined ? match : String(values[key])
+    ));
+  };
 </script>
 
 <div class="dialog-backdrop" role="presentation">
@@ -13,28 +21,28 @@
     aria-describedby="operation-result-message"
   >
     <header class="confirm-dialog-header">
-      <div id="operation-result-title">{snapshot.label} Failed</div>
-      <div class="confirm-risk risk-danger">{snapshot.result.failed.length} failed</div>
+      <div id="operation-result-title">{t("operation.failedTitle", { label: snapshot.label })}</div>
+      <div class="confirm-risk risk-danger">{t("operation.failedCount", { count: snapshot.result.failed.length })}</div>
     </header>
     <div id="operation-result-message" class="confirm-message">
-      {snapshot.result.succeeded.length} succeeded / {snapshot.result.failed.length} failed
+      {t("operation.resultSummary", { succeeded: snapshot.result.succeeded.length, failed: snapshot.result.failed.length })}
       {#if snapshot.logPath}
-        <br />log: {snapshot.logPath}
+        <br />{t("common.log")}: {snapshot.logPath}
       {/if}
     </div>
     <div class="operation-result confirm-result">
       {#each snapshot.result.failed.slice(0, 12) as item}
-        <div class="result-failed" title={`${item.path || "-"}: ${item.message}`}>{item.path || "-"}: {item.message}</div>
+        <div class="result-failed" title={`${item.path || "-"}: ${operationResultItemMessage(item, t)}`}>{item.path || "-"}: {operationResultItemMessage(item, t)}</div>
       {/each}
       {#if snapshot.result.failed.length > 12}
-        <div class="result-failed">...and {snapshot.result.failed.length - 12} more</div>
+        <div class="result-failed">{t("common.andMore", { count: snapshot.result.failed.length - 12 })}</div>
       {/if}
     </div>
     <div class="confirm-shortcuts">
-      <span>Close: Enter</span>
-      <span>Close: Esc</span>
+      <span>{t("shortcut.closeEnter")}</span>
+      <span>{t("shortcut.closeEsc")}</span>
       {#if snapshot.failedEntries.length}
-        <span>Show: [ left / ] right</span>
+        <span>{t("shortcut.showLeftRight")}</span>
       {/if}
     </div>
   </div>

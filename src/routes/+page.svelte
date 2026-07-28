@@ -29,6 +29,7 @@
     textViewerExtensions,
     virtualListOverscan,
   } from "./constants";
+  import { createTranslator } from "./localization";
   import {
     getAppearanceSettings,
     getAppSettings,
@@ -80,6 +81,7 @@
     externalCommandLines,
     localCommandTargets,
     markedCommandTargetsForPane,
+    ShellQuoteError,
     shellQuotePath,
     selectedCommandTargetsForPane,
     type ExternalCommandContext,
@@ -156,6 +158,7 @@
     returnToManagerState,
     type LocationDialogStatePatch,
   } from "./locationDialogState";
+  import { invokeErrorMessage } from "./tauriInvoke";
   import {
     deleteLocalFavoriteProfile,
     deleteSearchProfile,
@@ -209,7 +212,7 @@
     shouldShowOperationPaths,
     targetSummary,
   } from "./operationJobModel";
-  import { operationResultStatus, operationResultTerminalLines } from "./operationResultModel";
+  import { operationResultItemMessage, operationResultStatus, operationResultTerminalLines } from "./operationResultModel";
   import { cancelFileOperationJob, executeFileOperationJob } from "./operationSideEffects";
   import {
     createFilePropertySnapshot,
@@ -235,11 +238,13 @@
   } from "./terminalKeyHandling";
   import { terminalInputForKeyboardEvent } from "./terminalKeys";
   import {
+    getTerminalShellKind,
     resizeTerminal,
     startLocalTerminal,
     startSftpTerminal,
     stopTerminal,
     writeTerminalInput,
+    type TerminalShellKind,
   } from "./terminalSideEffects";
   import {
     acceptTerminalExit,
@@ -294,6 +299,7 @@
     SearchDirectoryListing,
     SearchDirectoryRequest,
     SearchProfile,
+    SafeModeStatus,
     SftpConnectionForm,
     SftpConnectionProfile,
     SftpConnectionTestResult,
@@ -343,6 +349,41 @@
     locale: "en",
     messages: {},
   };
+  let t = createTranslator(languageSettings);
+  $: t = createTranslator(languageSettings);
+  function localizedSftpConnectionMessage(result: SftpConnectionTestResult): string {
+    return operationResultItemMessage({
+      path: "",
+      message: result.message,
+      messageId: result.messageId,
+      messageValues: result.messageValues,
+    }, t);
+  }
+
+  function localizedSafeModeMessage(status: SafeModeStatus): string {
+    return operationResultItemMessage({
+      path: "",
+      message: status.message,
+      messageId: status.messageId,
+      messageValues: status.messageValues,
+    }, t);
+  }
+
+  function localizedBackendError(error: unknown): string {
+    return operationResultItemMessage({ path: "", message: invokeErrorMessage(error) }, t);
+  }
+
+  function localizedClipboardError(error: unknown): string {
+    if (error instanceof ShellQuoteError) return localizedShellQuoteError(error);
+    return t("clipboard.copyFailedWithError", { error: invokeErrorMessage(error) });
+  }
+
+  function localizedShellQuoteError(error: ShellQuoteError): string {
+    return error.code === "cmdUnsafePath"
+      ? t("shell.cmdUnsafePath", { path: error.value })
+      : t("shell.unknownShell");
+  }
+
   let languagePresets: LanguagePresetInfo[] = [];
   let preferencesDialogOpen = false;
   let preferencesLoading = false;
@@ -350,7 +391,7 @@
   let keyHelpVisible = false;
   let lastCommandId = "app.start";
   let lastKey = "";
-  let statusMessage = "Ready.";
+  let statusMessage = t("status.ready");
   let prefixMode: PrefixKey | null = null;
   let operationJob: FileOperationJob | null = null;
   let operationResult: FileOperationResult | null = null;
@@ -407,6 +448,7 @@
   let consoleVisible = true;
   let consoleFocused = false;
   let consoleCwd = "";
+  let terminalShellKind: TerminalShellKind = "unknown";
   let terminalFullscreen = false;
   let terminalElement: HTMLElement | null = null;
   let terminal: XtermTerminal | null = null;
@@ -610,7 +652,7 @@
       if (isStaleLoad(loadGenerations, paneId, load.generation)) return false;
 
       if (listing.truncated) {
-        statusMessage = `Search stopped at ${listing.entries.length} item(s). Narrow the query to inspect more.`;
+        statusMessage = t("search.truncated", { count: listing.entries.length });
         lastCommandId = "search.truncated";
       }
 
@@ -618,8 +660,8 @@
         pendingLargeSearchResult = { paneId, listing, request, returnPath };
         updatePane(paneId, { loading: false, error: null });
         statusMessage = listing.truncated
-          ? `Search stopped at ${listing.entries.length} item(s). Press Enter to display or Esc to cancel.`
-          : `Search found ${listing.entries.length} item(s). Press Enter to display or Esc to cancel.`;
+          ? t("search.truncatedPrompt", { count: listing.entries.length })
+          : t("search.largePrompt", { count: listing.entries.length });
         lastCommandId = "search.largeResultWarning";
         focusActivePaneAfterDialog();
         return false;
@@ -957,7 +999,7 @@
 
   function startPrefixMode(prefix: PrefixKey): void {
     prefixMode = prefix;
-    statusMessage = `prefix: ${prefix}`;
+    statusMessage = t("status.prefix", { prefix });
     lastCommandId = `prefix.${prefix}`;
   }
 
@@ -973,6 +1015,7 @@
 
   async function runPrefixKeyAction(action: PrefixKeyAction): Promise<void> {
     await runPrefixKeyActionWith(action, {
+      translateStatus: t,
       setStatus(message, commandId) {
         statusMessage = message;
         lastCommandId = commandId;
@@ -1144,7 +1187,7 @@
     }
 
     if (pane.source.kind !== "local") {
-      statusMessage = "Root navigation is only available for local panes.";
+      statusMessage = t("navigation.rootLocalOnly");
       lastCommandId = "entry.goRoot.unsupportedSource";
       return;
     }
@@ -1156,7 +1199,7 @@
 
   async function goHome(): Promise<void> {
     if (!homePath) {
-      statusMessage = "Home directory is not available.";
+      statusMessage = t("navigation.homeUnavailable");
       lastCommandId = "entry.goHome.unavailable";
       return;
     }
@@ -1174,7 +1217,7 @@
     }
 
     if (panes[activePaneId].source.kind !== "local") {
-      statusMessage = "Home navigation is only available for local panes.";
+      statusMessage = t("navigation.homeLocalOnly");
       lastCommandId = "entry.goHome.unsupportedSource";
       return;
     }
@@ -1191,7 +1234,7 @@
       sourcePane.source.kind !== "operationResult" &&
       sourcePane.source.kind !== "gitStatus"
     ) {
-      statusMessage = "Opening the other pane path here is only available for local panes.";
+      statusMessage = t("navigation.otherPanePathLocalOnly");
       lastCommandId = "pane.openOtherPathHere.unsupportedSource";
       return;
     }
@@ -1213,7 +1256,7 @@
       sourcePane.source.kind !== "operationResult" &&
       sourcePane.source.kind !== "gitStatus"
     ) {
-      statusMessage = "Opening the current path in the other pane is only available for local panes.";
+      statusMessage = t("navigation.currentPathOtherPaneLocalOnly");
       lastCommandId = "pane.openCurrentPathInOther.unsupportedSource";
       return;
     }
@@ -1257,7 +1300,7 @@
 
     const action = defaultAppOpenAction(pane, entry);
     if (action.type === "unsupported") {
-      statusMessage = action.message;
+      statusMessage = t("open.virtualDefaultUnsupported");
       lastCommandId = action.commandId;
       return;
     }
@@ -1268,7 +1311,7 @@
   async function editFocused(): Promise<void> {
     const pane = panes[activePaneId];
     if (pane.source.kind === "archive" || pane.source.kind === "sftp") {
-      statusMessage = "Editing is available for local files only.";
+      statusMessage = t("edit.localFilesOnly");
       lastCommandId = "file.edit.unsupportedSource";
       return;
     }
@@ -1276,7 +1319,7 @@
     const entry = focusedEntry(pane, visibleEntries(pane));
     if (!entry) return;
     if (entry.kind !== "file") {
-      statusMessage = "Editing is available for files only.";
+      statusMessage = t("edit.filesOnly");
       lastCommandId = "file.edit.unsupportedEntry";
       return;
     }
@@ -1288,7 +1331,7 @@
     const extension = fileExtension(entry.name);
     const action = viewerOpenAction(panes[activePaneId], entry, extension, imageViewerExtensions, textViewerExtensions);
     if (action.type === "unsupported") {
-      statusMessage = action.message;
+      statusMessage = t("viewer.sftpUnsupported");
       lastCommandId = action.commandId;
       return;
     }
@@ -1315,12 +1358,12 @@
         searchMode: false,
         searchMessage: "",
       };
-      statusMessage = `Opened internal text viewer: ${action.entry.name}`;
+      statusMessage = t("viewer.openText", { name: action.entry.name });
       lastCommandId = "viewer.openText";
       await tick();
       viewerElement?.focus();
     } catch (error) {
-      statusMessage = `Viewer failed: ${String(error)}`;
+      statusMessage = t("viewer.openFailed", { error: localizedBackendError(error) });
       lastCommandId = "viewer.openFailed";
     }
   }
@@ -1340,12 +1383,12 @@
         naturalWidth: null,
         naturalHeight: null,
       };
-      statusMessage = `Opened internal image viewer: ${entry.name}`;
+      statusMessage = t("viewer.openImage", { name: entry.name });
       lastCommandId = "viewer.openImage";
       await tick();
       viewerElement?.focus();
     } catch (error) {
-      statusMessage = `Image viewer failed: ${String(error)}`;
+      statusMessage = t("viewer.openImageFailed", { error: localizedBackendError(error) });
       lastCommandId = "viewer.openImageFailed";
     }
   }
@@ -1353,10 +1396,10 @@
   async function openWithDefaultApp(entry: FileEntry): Promise<void> {
     try {
       await openPathWithDefaultApp(invoke, entry.path);
-      statusMessage = `Opened with OS default app: ${entry.name}`;
+      statusMessage = t("open.defaultApp", { name: entry.name });
       lastCommandId = "entry.openDefaultApp";
     } catch (error) {
-      statusMessage = `Open failed: ${String(error)}`;
+      statusMessage = t("open.failed", { error: localizedBackendError(error) });
       lastCommandId = "entry.openDefaultAppFailed";
     }
   }
@@ -1364,10 +1407,10 @@
   async function openEditorForPath(path: string, label: string): Promise<void> {
     try {
       await openPathWithTextEditor(invoke, path);
-      statusMessage = `Opened text editor: ${label}`;
+      statusMessage = t("edit.opened", { name: label });
       lastCommandId = "file.edit";
     } catch (error) {
-      statusMessage = `Edit failed: ${String(error)}`;
+      statusMessage = t("edit.failed", { error: localizedBackendError(error) });
       lastCommandId = "file.editFailed";
     }
   }
@@ -1508,7 +1551,7 @@
       otherPane,
       activeMarked: localMarkedCommandTargets(activePane),
       otherMarked: localMarkedCommandTargets(otherPane),
-      isWindows: isWindowsPlatform(),
+      shellKind: terminalShellKind,
     };
   }
 
@@ -1528,7 +1571,7 @@
     textarea.select();
 
     try {
-      if (!document.execCommand("copy")) throw new Error("Clipboard copy command was rejected.");
+      if (!document.execCommand("copy")) throw new Error(t("clipboard.copyRejected"));
     } finally {
       document.body.removeChild(textarea);
     }
@@ -1537,25 +1580,25 @@
   async function copySelectedPathsToClipboard(): Promise<void> {
     const pane = panes[activePaneId];
     if (pane.source.kind !== "local") {
-      statusMessage = "Clipboard path copy is available for local sources only.";
+      statusMessage = t("clipboard.pathsLocalOnly");
       lastCommandId = "clipboard.sourceUnsupported";
       return;
     }
 
     const targets = selectedCommandTargets(pane);
     if (targets.length === 0) {
-      statusMessage = "No local path is available to copy.";
+      statusMessage = t("clipboard.noLocalPath");
       lastCommandId = "clipboard.noTargets";
       return;
     }
 
-    const text = clipboardTextForCommandTargets(targets, isWindowsPlatform());
     try {
+      const text = clipboardTextForCommandTargets(targets, terminalShellKind);
       await writeClipboardText(text);
-      statusMessage = `Copied ${targets.length} path(s) to clipboard.`;
+      statusMessage = t("clipboard.pathsCopied", { count: targets.length });
       lastCommandId = "clipboard.copySelectedPaths";
     } catch (error) {
-      statusMessage = error instanceof Error ? error.message : "Clipboard copy failed.";
+      statusMessage = localizedClipboardError(error);
       lastCommandId = "clipboard.copyFailed";
     }
   }
@@ -1563,23 +1606,23 @@
   async function copyCurrentDirectoryToClipboard(): Promise<void> {
     const pane = panes[activePaneId];
     if (pane.source.kind !== "local") {
-      statusMessage = "Current directory copy is available for local sources only.";
+      statusMessage = t("clipboard.currentDirectoryLocalOnly");
       lastCommandId = "clipboard.copyCurrentDirectory.sourceUnsupported";
       return;
     }
 
     if (!pane.currentPath) {
-      statusMessage = "No current directory is available to copy.";
+      statusMessage = t("clipboard.noCurrentDirectory");
       lastCommandId = "clipboard.copyCurrentDirectory.noPath";
       return;
     }
 
     try {
-      await writeClipboardText(shellQuotePath(pane.currentPath, isWindowsPlatform()));
-      statusMessage = "Copied current directory to clipboard.";
+      await writeClipboardText(shellQuotePath(pane.currentPath, terminalShellKind));
+      statusMessage = t("clipboard.currentDirectoryCopied");
       lastCommandId = "clipboard.copyCurrentDirectory";
     } catch (error) {
-      statusMessage = error instanceof Error ? error.message : "Clipboard copy failed.";
+      statusMessage = localizedClipboardError(error);
       lastCommandId = "clipboard.copyFailed";
     }
   }
@@ -1587,24 +1630,24 @@
   async function copySelectedNamesToClipboard(): Promise<void> {
     const pane = panes[activePaneId];
     if (pane.source.kind !== "local") {
-      statusMessage = "Clipboard name copy is available for local sources only.";
+      statusMessage = t("clipboard.namesLocalOnly");
       lastCommandId = "clipboard.copySelectedNames.sourceUnsupported";
       return;
     }
 
     const targets = selectedCommandTargets(pane);
     if (targets.length === 0) {
-      statusMessage = "No local filename is available to copy.";
+      statusMessage = t("clipboard.noLocalFilename");
       lastCommandId = "clipboard.copySelectedNames.noTargets";
       return;
     }
 
     try {
-      await writeClipboardText(clipboardNameTextForCommandTargets(targets, isWindowsPlatform()));
-      statusMessage = `Copied ${targets.length} filename(s) to clipboard.`;
+      await writeClipboardText(clipboardNameTextForCommandTargets(targets, terminalShellKind));
+      statusMessage = t("clipboard.namesCopied", { count: targets.length });
       lastCommandId = "clipboard.copySelectedNames";
     } catch (error) {
-      statusMessage = error instanceof Error ? error.message : "Clipboard copy failed.";
+      statusMessage = localizedClipboardError(error);
       lastCommandId = "clipboard.copyFailed";
     }
   }
@@ -1612,21 +1655,28 @@
   async function insertActiveSelectionIntoTerminal(): Promise<void> {
     const pane = panes[activePaneId];
     if (pane.source.kind !== "local") {
-      statusMessage = "Terminal insertion is available for local sources only.";
+      statusMessage = t("terminal.insertLocalOnly");
       lastCommandId = "terminal.insertActiveSelection.sourceUnsupported";
       return;
     }
 
     const targets = selectedCommandTargets(pane);
     if (targets.length === 0) {
-      statusMessage = "No local path is available to insert.";
+      statusMessage = t("terminal.noLocalPath");
       lastCommandId = "terminal.insertActiveSelection.noTargets";
       return;
     }
 
-    await writeTerminal(clipboardTextForCommandTargets(targets, isWindowsPlatform()));
-    statusMessage = `Inserted ${targets.length} path(s) into terminal.`;
-    lastCommandId = "terminal.insertActiveSelection";
+    try {
+      await writeTerminal(clipboardTextForCommandTargets(targets, terminalShellKind));
+      statusMessage = t("terminal.insertedPaths", { count: targets.length });
+      lastCommandId = "terminal.insertActiveSelection";
+    } catch (error) {
+      statusMessage = error instanceof ShellQuoteError
+        ? localizedShellQuoteError(error)
+        : t("terminal.unavailable", { error: localizedBackendError(error) });
+      lastCommandId = "terminal.insertActiveSelection.failed";
+    }
   }
 
   async function loadExternalCommands(): Promise<void> {
@@ -1636,7 +1686,7 @@
       externalCommands = await listExternalCommands(invoke);
       externalCommandCursorIndex = clampExternalCommandCursor(externalCommandCursorIndex, externalCommands.length);
     } catch (error) {
-      externalCommandError = String(error);
+      externalCommandError = localizedBackendError(error);
       externalCommands = [];
     } finally {
       externalCommandsLoading = false;
@@ -1669,12 +1719,21 @@
 
     const targets = selectedLocalCommandTargets();
     if (targets.length === 0) {
-      externalCommandError = "External commands are available for local selected paths only.";
+      externalCommandError = t("externalCommand.localSelectionOnly");
       lastCommandId = "command.noTargets";
       return;
     }
 
-    const commandLines = externalCommandLines(command, targets, externalCommandContext());
+    let commandLines: string[];
+    try {
+      commandLines = externalCommandLines(command, targets, externalCommandContext());
+    } catch (error) {
+      externalCommandError = error instanceof ShellQuoteError
+        ? localizedShellQuoteError(error)
+        : localizedBackendError(error);
+      lastCommandId = "command.quoteFailed";
+      return;
+    }
     commandDialogOpen = false;
     externalCommandError = "";
     await focusConsoleAndStart();
@@ -1723,6 +1782,7 @@
       destinationPane,
       targetEntries,
       windowsAttributesMode: kind === "chmod" && useWindowsAttributesOperation(sourcePane),
+      t,
     });
   }
 
@@ -1736,7 +1796,7 @@
           : null;
     const destinationPane = destinationPaneId ? panes[destinationPaneId] : null;
     if (!operationSupportedForPaneSources(kind, sourcePane, destinationPane)) {
-      statusMessage = "This source/destination file operation is not implemented yet.";
+      statusMessage = t("operation.sourceUnsupported");
       lastCommandId = "operation.sourceUnsupported";
       return;
     }
@@ -1784,14 +1844,14 @@
   function openSearchDialog(): void {
     const pane = panes[activePaneId];
     if (pane.source.kind === "sftp") {
-      statusMessage = "Search source is available for local/archive/search panes in this phase.";
+      statusMessage = t("search.sourceUnsupported");
       lastCommandId = "search.openUnsupportedSource";
       return;
     }
 
     const rootPath = searchRootPathForPane(pane);
     if (!rootPath) {
-      statusMessage = "No local search root is available.";
+      statusMessage = t("search.noRoot");
       lastCommandId = "search.openNoRoot";
       return;
     }
@@ -1821,7 +1881,7 @@
 
   function cancelLargeSearchResult(): void {
     pendingLargeSearchResult = null;
-    statusMessage = "Large search result display canceled.";
+    statusMessage = t("search.largeCanceled");
     lastCommandId = "search.largeResultCancel";
     focusActivePaneAfterDialog();
   }
@@ -1832,8 +1892,8 @@
     pendingLargeSearchResult = null;
     applySearchListing(pending.paneId, pending.listing, pending.request, pending.returnPath);
         statusMessage = pending.listing.truncated
-          ? `Search stopped at ${pending.listing.entries.length} item(s).`
-          : `Search completed: ${pending.listing.entries.length} item(s).`;
+          ? t("search.truncated", { count: pending.listing.entries.length })
+          : t("search.completed", { count: pending.listing.entries.length });
     lastCommandId = "search.largeResultDisplay";
     focusActivePaneAfterDialog();
   }
@@ -1841,16 +1901,16 @@
   async function runSearchFromDialog(): Promise<void> {
     if (searchRunning) return;
     if (!searchForm.rootPath.trim()) {
-      searchError = "root path is required";
+      searchError = t("search.rootRequired");
       lastCommandId = "search.invalid";
       return;
     }
 
     let request: SearchDirectoryRequest;
     try {
-      request = searchRequestFromForm(searchForm);
+      request = searchRequestFromForm(searchForm, t);
     } catch (error) {
-      searchError = String(error);
+      searchError = localizedBackendError(error);
       lastCommandId = "search.invalid";
       return;
     }
@@ -1865,14 +1925,14 @@
       if (applied) {
         const source = panes[activePaneId].source;
         statusMessage = source.kind === "search" && source.truncated
-          ? `Search stopped at ${panes[activePaneId].entries.length} item(s).`
-          : `Search completed: ${panes[activePaneId].entries.length} item(s).`;
+          ? t("search.truncated", { count: panes[activePaneId].entries.length })
+          : t("search.completed", { count: panes[activePaneId].entries.length });
         lastCommandId = "search.resultSource";
       }
       focusActivePaneAfterDialog();
     } catch (error) {
-      searchError = String(error);
-      statusMessage = `Search failed: ${String(error)}`;
+      searchError = localizedBackendError(error);
+      statusMessage = t("search.failed", { error: localizedBackendError(error) });
       lastCommandId = "search.failed";
     } finally {
       searchRunning = false;
@@ -1883,17 +1943,17 @@
     const pane = panes[activePaneId];
     const path = searchRootPathForPane(pane);
     if (!path) {
-      statusMessage = "Git status is available for local-like panes only.";
+      statusMessage = t("git.localLikeOnly");
       lastCommandId = "git.openStatus.unsupportedSource";
       return;
     }
 
     const applied = await loadGitStatusDirectory(activePaneId, path, searchReturnPathForPane(pane, consoleCwd));
     if (applied) {
-      statusMessage = `Git changed files: ${panes[activePaneId].entries.length} item(s).`;
+      statusMessage = t("git.changedFiles", { count: panes[activePaneId].entries.length });
       lastCommandId = "git.openStatus";
     } else {
-      statusMessage = panes[activePaneId].error ? `Git status failed: ${panes[activePaneId].error}` : "Git status canceled.";
+      statusMessage = panes[activePaneId].error ? t("git.failed", { error: localizedBackendError(panes[activePaneId].error ?? "") }) : t("git.canceled");
       lastCommandId = "git.openStatus.failed";
     }
     focusActivePaneAfterDialog();
@@ -1916,21 +1976,21 @@
   }
 
   function operationConflictMessages(job: FileOperationJob): string[] {
-    return operationConflictMessagesForEntries(job, panes[job.destinationPaneId ?? job.sourcePaneId].entries);
+    return operationConflictMessagesForEntries(job, panes[job.destinationPaneId ?? job.sourcePaneId].entries, t);
   }
 
   function operationBlockingMessages(job: FileOperationJob): string[] {
-    return operationBlockingMessagesForEntries(job, panes[job.destinationPaneId ?? job.sourcePaneId].entries);
+    return operationBlockingMessagesForEntries(job, panes[job.destinationPaneId ?? job.sourcePaneId].entries, t);
   }
 
   function executionConfirmationMessage(job: FileOperationJob): string {
-    return operationExecutionConfirmationMessage(job, panes[job.destinationPaneId ?? job.sourcePaneId].entries);
+    return operationExecutionConfirmationMessage(job, panes[job.destinationPaneId ?? job.sourcePaneId].entries, t);
   }
 
   async function writeOperationResultToTerminal(label: string, result: FileOperationResult): Promise<void> {
     if (!appSettings.operationResult.printToTerminal || !terminalElement) return;
     if (!terminal) await initializeTerminal();
-    for (const line of operationResultTerminalLines(label, result)) {
+    for (const line of operationResultTerminalLines(label, result, 10, t)) {
       terminal?.writeln(line);
     }
   }
@@ -1938,9 +1998,13 @@
   async function saveOperationFailureLog(label: string, result: FileOperationResult): Promise<string | null> {
     if (!appSettings.operationResult.saveFailureLog || result.failed.length === 0) return null;
     try {
-      return await saveOperationFailureLogEffect(invoke, label, result.failed);
+      const localizedFailed = result.failed.map((item) => ({
+        ...item,
+        message: operationResultItemMessage(item, t),
+      }));
+      return await saveOperationFailureLogEffect(invoke, label, localizedFailed);
     } catch (error) {
-      statusMessage = `Operation failure log save failed: ${String(error)}`;
+      statusMessage = t("operation.failureLogSaveFailed", { error: localizedBackendError(error) });
       return null;
     }
   }
@@ -1950,8 +2014,8 @@
     const logPath = await saveOperationFailureLog(job.label, result);
     await writeOperationResultToTerminal(job.label, result);
     if (appSettings.operationResult.showStatus) {
-      statusMessage = operationResultStatus(job.label, result);
-      if (logPath && result.failed.length > 0) statusMessage += ` / log: ${logPath}`;
+      statusMessage = operationResultStatus(job.label, result, t);
+      if (logPath && result.failed.length > 0) statusMessage += t("operation.resultLogSuffix", { path: logPath });
     }
     if (appSettings.operationResult.showFailureDialog && result.failed.length > 0) {
       operationFailureDialog = {
@@ -1976,14 +2040,14 @@
     if (!operationJob.executable) {
       operationResult = {
         succeeded: [],
-        failed: [{ path: "", message: "This job is not executable." }],
+        failed: [{ path: "", message: t("operation.jobNotExecutable") }],
       };
       return;
     }
     if ((operationJob.kind === "rename" || operationJob.kind === "mkdir" || operationJob.kind === "createFile" || operationJob.kind === "createArchive" || operationJob.kind === "chmod" || operationJob.kind === "windowsAttributes") && !operationJob.requestedName?.trim()) {
       operationResult = {
         succeeded: [],
-        failed: [{ path: "", message: operationJob.kind === "chmod" ? "Mode is required before execution." : operationJob.kind === "windowsAttributes" ? "Attribute expression is required before execution." : "Name is required before execution." }],
+        failed: [{ path: "", message: operationJob.kind === "chmod" ? t("operation.modeRequired") : operationJob.kind === "windowsAttributes" ? t("operation.attributesRequired") : t("operation.nameRequired") }],
       };
       focusOperationNameInput();
       return;
@@ -2022,13 +2086,13 @@
       } else if (executingRedo && result.succeeded.length > 0 && result.failed.length === 0 && !result.canceled) {
         commitRedoHistory(executedJob);
       } else if (!executingUndo && !executingRedo && result.succeeded.length > 0 && result.failed.length === 0 && !result.canceled) {
-        pushUndoSnapshot(createUndoSnapshot(executedJob), true);
+        pushUndoSnapshot(createUndoSnapshot(executedJob, t), true);
       }
       await reloadPanesAfterOperation(executableJob);
     } catch (error) {
       const result = {
         succeeded: [],
-        failed: [{ path: "", message: String(error) }],
+        failed: [{ path: "", message: invokeErrorMessage(error) }],
       };
       await handleOperationResult(executedJob, result);
     } finally {
@@ -2047,7 +2111,7 @@
   async function cancelOperationConfirmation(): Promise<void> {
     if (operationRunning && operationJob) {
       if (operationCancelRequested) {
-        statusMessage = "Cancel already requested. Waiting for current item to finish.";
+        statusMessage = t("operation.cancelAlreadyRequested");
         lastCommandId = "operation.cancelAlreadyRequested";
         return;
       }
@@ -2055,7 +2119,7 @@
       if (!operationCancelConfirmOpen) {
         operationCancelConfirmOpen = true;
         operationCancelConfirmOpenedAt = Date.now();
-        statusMessage = "Cancel operation? Enter stops after current item; Esc keeps running.";
+        statusMessage = t("operation.cancelConfirmStatus");
         lastCommandId = "operation.cancelConfirm";
         return;
       }
@@ -2070,7 +2134,7 @@
 
       operationCancelConfirmOpen = false;
       operationCancelConfirmOpenedAt = 0;
-      statusMessage = "Operation continues.";
+      statusMessage = t("operation.continues");
       lastCommandId = "operation.cancelConfirmClose";
       return;
     }
@@ -2096,16 +2160,16 @@
     lastCommandId = "operation.cancelRequested";
     try {
       const accepted = await cancelFileOperationJob(invoke, operationJob.id);
-      statusMessage = accepted ? "Cancel requested. Waiting for current item to finish." : "Cancel request was not accepted.";
+      statusMessage = accepted ? t("operation.cancelRequestedStatus") : t("operation.cancelNotAccepted");
     } catch (error) {
-      statusMessage = `Cancel request failed: ${String(error)}`;
+      statusMessage = t("operation.cancelFailed", { error: localizedBackendError(error) });
     }
   }
 
   function previewUndoOperation(): void {
     const snapshot = undoStack.at(-1) ?? null;
     if (!snapshot) {
-      statusMessage = "No undoable operation.";
+      statusMessage = t("operation.noUndo");
       lastCommandId = "app.undo.empty";
       return;
     }
@@ -2118,14 +2182,14 @@
     operationCancelConfirmOpen = false;
     operationCancelConfirmOpenedAt = 0;
     confirmationDialogOpen = true;
-    statusMessage = `${snapshot.label} (${undoStack.length} undo / ${redoStack.length} redo)`;
+    statusMessage = t("operation.undoStatus", { label: snapshot.label, undo: undoStack.length, redo: redoStack.length });
     lastCommandId = "app.undo";
   }
 
   function previewRedoOperation(): void {
     const snapshot = redoStack.at(-1) ?? null;
     if (!snapshot) {
-      statusMessage = "No redoable operation.";
+      statusMessage = t("operation.noRedo");
       lastCommandId = "app.redo.empty";
       return;
     }
@@ -2138,13 +2202,13 @@
     operationCancelConfirmOpen = false;
     operationCancelConfirmOpenedAt = 0;
     confirmationDialogOpen = true;
-    statusMessage = `${snapshot.redoLabel} (${undoStack.length} undo / ${redoStack.length} redo)`;
+    statusMessage = t("operation.redoStatus", { label: snapshot.redoLabel, undo: undoStack.length, redo: redoStack.length });
     lastCommandId = "app.redo";
   }
 
   function operationSafetyMessages(job: FileOperationJob): string[] {
     if (activeUndoSnapshot && job.id === activeUndoSnapshot.job.id) {
-      return undoSafetyMessages(activeUndoSnapshot, panes[job.sourcePaneId]);
+      return undoSafetyMessages(activeUndoSnapshot, panes[job.sourcePaneId], t);
     }
     return [];
   }
@@ -2166,7 +2230,7 @@
     if (!activeRedoSnapshot) return;
     const snapshot = activeRedoSnapshot;
     redoStack = redoStack.at(-1)?.redoJob.id === snapshot.redoJob.id ? redoStack.slice(0, -1) : redoStack.filter((item) => item.redoJob.id !== snapshot.redoJob.id);
-    pushUndoSnapshot(createUndoSnapshot(executedJob), false);
+    pushUndoSnapshot(createUndoSnapshot(executedJob, t), false);
   }
 
   function refreshLocationOptions(): void {
@@ -2178,7 +2242,7 @@
       searchProfiles,
       activeSftpSessions,
       sftpProfiles,
-    });
+    }, t);
     locationCursorIndex = clampLocationCursor(locationCursorIndex, locationOptionItems);
   }
 
@@ -2191,7 +2255,7 @@
       activeSftpSessions = await listActiveSftpSessions(invoke);
       refreshLocationOptions();
     } catch (error) {
-      statusMessage = `Active SFTP session load failed: ${String(error)}`;
+      statusMessage = t("location.activeSftpLoadFailed", { error: localizedBackendError(error) });
     }
   }
 
@@ -2214,10 +2278,10 @@
     if (sftpConnectionInUseByOtherPane(connectionId, leavingPaneId)) return;
     try {
       await disconnectSftpConnection(connectionId);
-      statusMessage = `SFTP session disconnected: ${connectionId}`;
+      statusMessage = t("location.sftpSessionDisconnected", { connectionId });
       lastCommandId = "remote.disconnectAuto";
     } catch (error) {
-      statusMessage = `SFTP session disconnect failed: ${String(error)}`;
+      statusMessage = t("location.sftpSessionDisconnectFailed", { error: localizedBackendError(error) });
     }
   }
 
@@ -2329,7 +2393,7 @@
     }
 
     closeSftpConnectionDialog();
-    statusMessage = "Already on a local source.";
+    statusMessage = t("location.alreadyLocal");
     lastCommandId = "location.switchLocalNoop";
   }
 
@@ -2370,7 +2434,7 @@
       refreshLocationOptions();
       lastCommandId = "location.loadProfiles";
     } catch (error) {
-      locationProfilesError = String(error);
+      locationProfilesError = localizedBackendError(error);
       lastCommandId = "location.loadProfilesFailed";
     } finally {
       locationProfilesLoading = false;
@@ -2397,20 +2461,20 @@
   async function addCurrentSearchToProfiles(): Promise<void> {
     const source = panes[activePaneId].source;
     if (source.kind !== "search") {
-      statusMessage = "Only search sources can be saved as search profiles.";
+      statusMessage = t("location.searchProfileOnly");
       lastCommandId = "location.addSearchUnsupportedSource";
       return;
     }
 
     if (searchProfiles.some((profile) => searchProfileMatchesSource(profile, source))) {
-      statusMessage = `Search profile already exists: ${searchProfileNameFromSource(source)}`;
+      statusMessage = t("location.searchProfileDuplicate", { name: searchProfileNameFromSource(source, t) });
       lastCommandId = "location.addSearchProfileDuplicate";
       return;
     }
 
     locationProfilesError = "";
     try {
-      const profile = await saveSearchProfile(invoke, source);
+      const profile = await saveSearchProfile(invoke, source, t);
       await ensureSftpProfilesLoaded(true);
       if (!searchProfiles.some((existing) => existing.id === profile.id)) {
         searchProfiles = [...searchProfiles, profile].sort((left, right) =>
@@ -2422,11 +2486,11 @@
         (option) => option.kind === "searchProfile" && option.searchProfile?.id === profile.id,
       );
       if (searchIndex >= 0) locationCursorIndex = searchIndex;
-      statusMessage = `Search profile added: ${profile.name}`;
+      statusMessage = t("location.searchProfileAdded", { name: profile.name });
       lastCommandId = "location.addSearchProfile";
     } catch (error) {
-      locationProfilesError = String(error);
-      statusMessage = `Search profile add failed: ${String(error)}`;
+      locationProfilesError = localizedBackendError(error);
+      statusMessage = t("location.searchProfileAddFailed", { error: localizedBackendError(error) });
       lastCommandId = "location.addSearchProfileFailed";
     }
   }
@@ -2435,20 +2499,20 @@
     const pane = panes[activePaneId];
     const path = pane.source.kind === "local" ? pane.currentPath : paneConsolePath(pane);
     if (!path || pane.source.kind !== "local") {
-      statusMessage = "Only local paths can be added to favorites.";
+      statusMessage = t("location.localFavoriteOnly");
       lastCommandId = "location.addFavoriteUnsupportedSource";
       return;
     }
 
     if (localFavorites.some((favorite) => favorite.path === path)) {
-      statusMessage = `Local favorite already exists: ${path}`;
+      statusMessage = t("location.localFavoriteDuplicate", { path });
       lastCommandId = "location.addFavoriteDuplicate";
       return;
     }
 
     locationProfilesError = "";
     try {
-      const favorite = await saveLocalFavoriteProfile(invoke, path);
+      const favorite = await saveLocalFavoriteProfile(invoke, path, t);
       await ensureSftpProfilesLoaded(true);
       if (!localFavorites.some((existing) => existing.id === favorite.id)) {
         localFavorites = [...localFavorites, favorite].sort((left, right) =>
@@ -2460,11 +2524,11 @@
         (option) => option.kind === "localFavorite" && option.localFavorite?.id === favorite.id,
       );
       if (favoriteIndex >= 0) locationCursorIndex = favoriteIndex;
-      statusMessage = `Local favorite added: ${favorite.name}`;
+      statusMessage = t("location.localFavoriteAdded", { name: favorite.name });
       lastCommandId = "location.addFavorite";
     } catch (error) {
-      locationProfilesError = String(error);
-      statusMessage = `Local favorite add failed: ${String(error)}`;
+      locationProfilesError = localizedBackendError(error);
+      statusMessage = t("location.localFavoriteAddFailed", { error: localizedBackendError(error) });
       lastCommandId = "location.addFavoriteFailed";
     }
   }
@@ -2494,12 +2558,12 @@
         left.name.localeCompare(right.name, "ja-JP"),
       );
     }
-    statusMessage = `SFTP profile saved: ${savedProfile.name} (${sftpProfiles.length} profile(s))`;
+    statusMessage = t("location.sftpProfileSavedWithCount", { name: savedProfile.name, count: sftpProfiles.length });
   }
 
   async function saveSftpProfileOnlyFromForm(): Promise<void> {
     if (sftpConnecting) return;
-    const validationMessage = validateSftpProfileForm(sftpForm);
+    const validationMessage = validateSftpProfileForm(sftpForm, t);
     if (validationMessage) {
       sftpConnectionError = validationMessage;
       lastCommandId = "location.saveProfile.invalid";
@@ -2510,7 +2574,7 @@
     sftpConnectionResult = null;
     try {
       await saveSftpProfileFromForm();
-      statusMessage = `SFTP profile saved: ${sftpForm.name}`;
+      statusMessage = t("location.sftpProfileSaved", { name: sftpForm.name });
       applyLocationDialogStatePatch(returnToManagerState(sftpForm));
       await tick();
       refreshLocationOptions();
@@ -2518,8 +2582,8 @@
       if (savedIndex >= 0) locationCursorIndex = savedIndex;
       lastCommandId = "location.saveProfile";
     } catch (error) {
-      sftpConnectionError = String(error);
-      statusMessage = `SFTP profile save failed: ${String(error)}`;
+      sftpConnectionError = localizedBackendError(error);
+      statusMessage = t("location.sftpProfileSaveFailed", { error: localizedBackendError(error) });
       lastCommandId = "location.saveProfileFailed";
     }
   }
@@ -2537,7 +2601,7 @@
     }
     if (option?.kind !== "sftpProfile" || !option.profile || locationProfilesLoading) {
       applyLocationDialogStatePatch(clearPendingDeletesState());
-      statusMessage = "Select an SFTP profile before deleting.";
+      statusMessage = t("location.selectSftpProfileBeforeDelete");
       lastCommandId = "location.deleteProfileNoTarget";
       return;
     }
@@ -2545,7 +2609,7 @@
 
     if (pendingDeleteProfile?.id !== profile.id) {
       applyLocationDialogStatePatch(armDeleteSftpProfileState(profile));
-      statusMessage = `Press D again or Enter to delete SFTP profile: ${profile.name}`;
+      statusMessage = t("location.confirmDeleteSftpProfileStatus", { name: profile.name });
       lastCommandId = "location.deleteProfileArm";
       return;
     }
@@ -2557,11 +2621,11 @@
       applyLocationDialogStatePatch(clearPendingDeletesState());
       await tick();
       refreshLocationOptions();
-      statusMessage = `SFTP profile deleted: ${profile.name}`;
+      statusMessage = t("location.sftpProfileDeleted", { name: profile.name });
       lastCommandId = "location.deleteProfile";
     } catch (error) {
-      locationProfilesError = String(error);
-      statusMessage = `SFTP profile delete failed: ${String(error)}`;
+      locationProfilesError = localizedBackendError(error);
+      statusMessage = t("location.sftpProfileDeleteFailed", { error: localizedBackendError(error) });
       lastCommandId = "location.deleteProfileFailed";
     }
   }
@@ -2569,7 +2633,7 @@
   async function disconnectFocusedActiveSftpSession(): Promise<void> {
     const option = locationOptionItems[Math.min(locationCursorIndex, locationOptionItems.length - 1)];
     if (option?.kind !== "activeSftpSession" || !option.activeSession) {
-      statusMessage = "Select an active SFTP session before disconnecting.";
+      statusMessage = t("location.selectActiveSftpBeforeDisconnect");
       lastCommandId = "remote.disconnectNoTarget";
       return;
     }
@@ -2584,10 +2648,10 @@
 
     try {
       await disconnectSftpConnection(connectionId);
-      statusMessage = `SFTP session disconnected: ${connectionId}`;
+      statusMessage = t("location.sftpSessionDisconnected", { connectionId });
       lastCommandId = "remote.disconnect";
     } catch (error) {
-      statusMessage = `SFTP session disconnect failed: ${String(error)}`;
+      statusMessage = t("location.sftpSessionDisconnectFailed", { error: localizedBackendError(error) });
       lastCommandId = "remote.disconnectFailed";
     }
   }
@@ -2597,7 +2661,7 @@
 
     if (pendingDeleteLocalFavorite?.id !== favorite.id) {
       applyLocationDialogStatePatch(armDeleteLocalFavoriteState(favorite));
-      statusMessage = `Press D again or Enter to delete local favorite: ${favorite.name}`;
+      statusMessage = t("location.confirmDeleteLocalFavoriteStatus", { name: favorite.name });
       lastCommandId = "location.deleteLocalFavoriteArm";
       return;
     }
@@ -2609,11 +2673,11 @@
       applyLocationDialogStatePatch(clearPendingDeletesState());
       await tick();
       refreshLocationOptions();
-      statusMessage = `Local favorite deleted: ${favorite.name}`;
+      statusMessage = t("location.localFavoriteDeleted", { name: favorite.name });
       lastCommandId = "location.deleteLocalFavorite";
     } catch (error) {
-      locationProfilesError = String(error);
-      statusMessage = `Local favorite delete failed: ${String(error)}`;
+      locationProfilesError = localizedBackendError(error);
+      statusMessage = t("location.localFavoriteDeleteFailed", { error: localizedBackendError(error) });
       lastCommandId = "location.deleteLocalFavoriteFailed";
     }
   }
@@ -2623,7 +2687,7 @@
 
     if (pendingDeleteSearchProfile?.id !== profile.id) {
       applyLocationDialogStatePatch(armDeleteSearchProfileState(profile));
-      statusMessage = `Press D again or Enter to delete search profile: ${profile.name}`;
+      statusMessage = t("location.confirmDeleteSearchProfileStatus", { name: profile.name });
       lastCommandId = "location.deleteSearchProfileArm";
       return;
     }
@@ -2635,25 +2699,25 @@
       applyLocationDialogStatePatch(clearPendingDeletesState());
       await tick();
       refreshLocationOptions();
-      statusMessage = `Search profile deleted: ${profile.name}`;
+      statusMessage = t("location.searchProfileDeleted", { name: profile.name });
       lastCommandId = "location.deleteSearchProfile";
     } catch (error) {
-      locationProfilesError = String(error);
-      statusMessage = `Search profile delete failed: ${String(error)}`;
+      locationProfilesError = localizedBackendError(error);
+      statusMessage = t("location.searchProfileDeleteFailed", { error: localizedBackendError(error) });
       lastCommandId = "location.deleteSearchProfileFailed";
     }
   }
 
   async function testSftpConnectionFromDialog(trustHostKey = false): Promise<void> {
     if (sftpConnecting) return;
-    const validationMessage = validateSftpConnectionForm(sftpForm);
+    const validationMessage = validateSftpConnectionForm(sftpForm, t);
     if (validationMessage) {
       sftpConnectionError = validationMessage;
       lastCommandId = "remote.connectSftp.invalid";
       return;
     }
 
-    applyLocationDialogStatePatch(beginSftpConnectState(trustHostKey));
+    applyLocationDialogStatePatch(beginSftpConnectState(trustHostKey, t));
     lastCommandId = "remote.connectSftp";
     try {
       const result = await testSftpConnection(invoke, sftpForm, trustHostKey);
@@ -2661,14 +2725,15 @@
         sftpConnectionResult: result,
         pendingKnownHost: null,
       });
-      statusMessage = result.message;
+      const connectionMessage = localizedSftpConnectionMessage(result);
+      statusMessage = connectionMessage;
       if (sftpForm.saveProfile) {
         try {
           await saveSftpProfileFromForm();
-          statusMessage = `${result.message} Profile saved.`;
+          statusMessage = t("location.profileSavedAfterConnection", { message: connectionMessage });
         } catch (error) {
-          statusMessage = `${result.message} Profile save failed: ${String(error)}`;
-          sftpConnectionError = `Profile save failed: ${String(error)}`;
+          statusMessage = t("location.profileSaveFailedAfterConnection", { message: connectionMessage, error: localizedBackendError(error) });
+          sftpConnectionError = t("location.profileSaveFailedInline", { error: localizedBackendError(error) });
           lastCommandId = "remote.connectSftp.temporaryAfterSaveFailed";
         }
       }
@@ -2682,12 +2747,12 @@
     } catch (error) {
       const knownHostPrompt = parseKnownHostPrompt(error);
       if (knownHostPrompt && !trustHostKey) {
-        applyLocationDialogStatePatch(acceptKnownHostPromptState(knownHostPrompt));
-        statusMessage = `SFTP host key is unknown: ${knownHostPrompt.host}:${knownHostPrompt.port}`;
+        applyLocationDialogStatePatch(acceptKnownHostPromptState(knownHostPrompt, t));
+        statusMessage = t("location.sftpUnknownHostKeyStatus", { host: knownHostPrompt.host, port: knownHostPrompt.port });
         lastCommandId = "remote.connectSftp.unknownHostKey";
       } else {
-        applyLocationDialogStatePatch(rejectSftpConnectState(sftpForm, String(error)));
-        statusMessage = `SFTP connection failed: ${String(error)}`;
+        applyLocationDialogStatePatch(rejectSftpConnectState(sftpForm, localizedBackendError(error)));
+        statusMessage = t("location.sftpConnectionFailed", { error: localizedBackendError(error) });
         lastCommandId = "remote.connectSftp.failed";
       }
     } finally {
@@ -2816,7 +2881,7 @@
       terminal?.clear();
       lastCommandId = source.kind === "sftp" ? "terminal.startSsh" : "terminal.start";
     } catch (error) {
-      terminal?.writeln(`[terminal start failed] ${String(error)}`);
+      terminal?.writeln(t("terminal.startFailed", { error: localizedBackendError(error) }));
       lastCommandId = "terminal.startFailed";
     } finally {
       terminalSession = failTerminalStart(terminalSession);
@@ -2841,7 +2906,7 @@
     if (!result.accepted) return;
 
     terminal?.writeln("");
-    terminal?.writeln(`[shell exited: ${result.code}] Press x to restart.`);
+    terminal?.writeln(t("terminal.shellExited", { code: result.code }));
     if (consoleFocused) returnFromConsole();
     lastCommandId = "terminal.exit";
   }
@@ -2854,7 +2919,7 @@
       await writeTerminalInput(invoke, input);
     } catch (error) {
       terminalSession = resetTerminalSession(terminalSession);
-      terminal?.writeln(`[terminal unavailable] ${String(error)}`);
+      terminal?.writeln(t("terminal.unavailable", { error: localizedBackendError(error) }));
       lastCommandId = "terminal.writeFailed";
     }
   }
@@ -2900,7 +2965,7 @@
     terminalCopyMode = beginTerminalCopyMode(terminal);
     terminal.clearSelection();
     updateTerminalCopySelection();
-    statusMessage = "Terminal copy mode: move to select, Enter copies, Esc cancels.";
+    statusMessage = t("terminal.copyModeStatus");
     lastCommandId = "terminal.copyMode";
   }
 
@@ -2921,18 +2986,18 @@
     if (!terminal) return;
     const text = terminal.getSelection();
     if (!text) {
-      statusMessage = "No terminal text is selected.";
+      statusMessage = t("terminal.copyModeNoSelection");
       lastCommandId = "terminal.copyModeEmpty";
       return;
     }
 
     try {
       await writeClipboardText(text);
-      statusMessage = "Copied terminal selection.";
+      statusMessage = t("terminal.copyModeCopied");
       lastCommandId = "terminal.copyModeCopy";
       exitTerminalCopyMode();
     } catch (error) {
-      statusMessage = error instanceof Error ? error.message : "Terminal text copy failed.";
+      statusMessage = t("terminal.copyModeCopyFailedWithError", { error: invokeErrorMessage(error) });
       lastCommandId = "terminal.copyModeCopyFailed";
     }
   }
@@ -2967,7 +3032,7 @@
     void runTerminalCopyModeKeyActionWith(action, {
       cancel() {
         exitTerminalCopyMode(true);
-        statusMessage = "Terminal copy mode cancelled.";
+        statusMessage = t("terminal.copyModeCancelled");
         lastCommandId = "terminal.copyModeCancel";
       },
       copy: copyTerminalSelection,
@@ -3037,6 +3102,7 @@
       },
       customKeyHandler: handleXtermKeyEvent,
       appearance: appearanceSettings,
+      initialPrompt: t("terminal.initialPrompt"),
     });
     terminal = created.terminal;
     terminalFit = created.fit;
@@ -3104,13 +3170,13 @@
     const snapshot = operationFailureDialog;
     if (!snapshot || snapshot.failedEntries.length === 0) return;
     const entries = snapshot.failedEntries;
-    const source = createOperationResultSource(entries, snapshot.returnPath, snapshot.label);
+    const source = createOperationResultSource(entries, snapshot.returnPath, snapshot.label, t);
     operationFailureDialog = null;
     updatePane(side, loadedEntriesPatch(source, source.location, entries, null, visibleLoadedEntries(side, entries)));
     activePaneId = side;
     if (!consoleFocused) consoleCwd = source.returnPath;
     queueCursorScroll(side);
-    statusMessage = `Operation failure virtual folder: ${entries.length} item(s).`;
+    statusMessage = t("operation.failureVirtualFolder", { count: entries.length });
     lastCommandId = side === "left" ? "operationResult.showLeft" : "operationResult.showRight";
     focusActivePaneAfterDialog();
   }
@@ -3140,21 +3206,21 @@
       sourcePane.source.kind !== "operationResult" &&
       sourcePane.source.kind !== "gitStatus"
     ) {
-      statusMessage = "Diff virtual folder is available for local/search/diff panes only.";
+      statusMessage = t("operationResult.diffUnsupported");
       lastCommandId = "diff.showSide.unsupported";
       return;
     }
 
     const entries = diffEntriesForSide(snapshot, side);
     const basePath = side === "left" ? snapshot.leftRootPath : snapshot.rightRootPath;
-    const source = createDiffSource(side, entries, sourcePane.source.kind, basePath, snapshot.mode);
+    const source = createDiffSource(side, entries, sourcePane.source.kind, basePath, snapshot.mode, t);
     paneDiffDialog = null;
     paneDiffListElement = null;
     updatePane(side, loadedEntriesPatch(source, source.location, entries, null, visibleLoadedEntries(side, entries)));
     activePaneId = side;
     if (!consoleFocused) consoleCwd = source.returnPath;
     queueCursorScroll(side);
-    statusMessage = `Diff virtual folder: ${side} pane, ${entries.length} item(s).`;
+    statusMessage = t("operationResult.diffVirtualFolder", { side, count: entries.length });
     lastCommandId = side === "left" ? "diff.showLeft" : "diff.showRight";
     focusActivePaneAfterDialog();
   }
@@ -3194,15 +3260,15 @@
 
   function openFilePropertiesDialog(): void {
     const pane = panes[activePaneId];
-    const snapshot = createFilePropertySnapshot(pane, visibleEntries(pane), paneHeaderLabel(pane));
+    const snapshot = createFilePropertySnapshot(pane, visibleEntries(pane), paneHeaderLabel(pane, t));
     if (!snapshot) {
-      statusMessage = "No entry for properties.";
+      statusMessage = t("properties.noEntry");
       lastCommandId = "file.properties";
       return;
     }
 
     filePropertiesDialog = snapshot;
-    statusMessage = `Properties: ${snapshot.totalCount} item(s).`;
+    statusMessage = t("properties.status", { count: snapshot.totalCount });
     lastCommandId = "file.properties";
   }
 
@@ -3212,10 +3278,10 @@
   }
 
   function openPaneDiffDialog(): void {
-    const snapshot = comparePaneEntries(panes.left, panes.right, paneHeaderLabel(panes.left), paneHeaderLabel(panes.right));
+    const snapshot = comparePaneEntries(panes.left, panes.right, paneHeaderLabel(panes.left, t), paneHeaderLabel(panes.right, t));
     paneDiffDialog = snapshot;
     const changed = changedDiffCount(snapshot);
-    statusMessage = `Pane diff: ${changed} changed / ${snapshot.counts.identical} identical.`;
+    statusMessage = t("diff.statusSummary", { changed, identical: snapshot.counts.identical });
     lastCommandId = "diff.openPaneDiff";
   }
 
@@ -3233,14 +3299,14 @@
 
   async function openDetailedPaneDiffDialog(): Promise<void> {
     if (detailedDiffRunning) {
-      statusMessage = "Detailed diff is already running. Press Esc to cancel.";
+      statusMessage = t("diff.detailedAlreadyRunning");
       lastCommandId = "diff.openDetailedPaneDiff.alreadyRunning";
       return;
     }
     const leftPane = panes.left;
     const rightPane = panes.right;
     if (!paneSourcesSupportDetailedDiff(leftPane, rightPane)) {
-      statusMessage = "Detailed diff is available for local panes only.";
+      statusMessage = t("diff.detailedLocalOnly");
       lastCommandId = "diff.openDetailedPaneDiff.unsupported";
       return;
     }
@@ -3248,7 +3314,7 @@
     const leftPath = leftPane.currentPath;
     const rightPath = rightPane.currentPath;
     if (!leftPath || !rightPath) {
-      statusMessage = "Detailed diff requires both pane paths.";
+      statusMessage = t("diff.detailedRequiresBothPaths");
       lastCommandId = "diff.openDetailedPaneDiff.noPath";
       return;
     }
@@ -3257,21 +3323,21 @@
     detailedDiffRunning = true;
     detailedDiffJobId = jobId;
     detailedDiffCancelRequested = false;
-    statusMessage = "Detailed diff: scanning recursively and calculating MD5... Press Esc to cancel.";
+    statusMessage = t("diff.detailedScanning");
     lastCommandId = "diff.openDetailedPaneDiff";
     try {
       const result = await compareLocalDirectoriesDetailed(invoke, jobId, leftPath, rightPath, true, true);
-      const snapshot = detailedDiffSnapshot(result, leftPane, rightPane, paneHeaderLabel(leftPane), paneHeaderLabel(rightPane));
+      const snapshot = detailedDiffSnapshot(result, leftPane, rightPane, paneHeaderLabel(leftPane, t), paneHeaderLabel(rightPane, t));
       paneDiffDialog = snapshot;
       const changed = changedDiffCount(snapshot);
-      statusMessage = `Detailed diff: ${changed} changed / ${snapshot.counts.identical} identical.`;
+      statusMessage = t("diff.detailedStatusSummary", { changed, identical: snapshot.counts.identical });
     } catch (error) {
-      const message = String(error);
+      const message = invokeErrorMessage(error);
       if (message.includes("Detailed diff canceled")) {
-        statusMessage = "Detailed diff canceled.";
+        statusMessage = t("diff.detailedCanceled");
         lastCommandId = "diff.openDetailedPaneDiff.canceled";
       } else {
-        statusMessage = `Detailed diff failed: ${message}`;
+        statusMessage = t("diff.detailedFailed", { error: localizedBackendError(message) });
         lastCommandId = "diff.openDetailedPaneDiff.failed";
       }
     } finally {
@@ -3284,16 +3350,16 @@
   async function cancelRunningDetailedDiff(): Promise<void> {
     if (!detailedDiffRunning || !detailedDiffJobId || detailedDiffCancelRequested) return;
     detailedDiffCancelRequested = true;
-    statusMessage = "Detailed diff cancel requested...";
+    statusMessage = t("diff.detailedCancelRequested");
     lastCommandId = "diff.cancelDetailedPaneDiff";
     try {
       const accepted = await cancelDetailedDiff(invoke, detailedDiffJobId);
       if (!accepted) {
-        statusMessage = "Detailed diff cancel request was not accepted.";
+        statusMessage = t("diff.detailedCancelNotAccepted");
         lastCommandId = "diff.cancelDetailedPaneDiff.missing";
       }
     } catch (error) {
-      statusMessage = `Detailed diff cancel failed: ${String(error)}`;
+      statusMessage = t("diff.detailedCancelFailed", { error: localizedBackendError(error) });
       lastCommandId = "diff.cancelDetailedPaneDiff.failed";
     }
   }
@@ -3345,7 +3411,7 @@
       applyLocationDialogStatePatch(clearPendingDeletesState());
       lastCommandId = "location.deleteCancel";
     } else if (action.type === "escapeCancelKnownHost") {
-      applyLocationDialogStatePatch(cancelKnownHostState());
+      applyLocationDialogStatePatch(cancelKnownHostState(t));
       lastCommandId = "remote.connectSftp.knownHostCancel";
     } else if (action.type === "backToManager") {
       returnToLocationManager();
@@ -3628,7 +3694,7 @@
       appSettings = await getAppSettings(invoke);
       lastCommandId = "settings.load";
     } catch (error) {
-      statusMessage = `Settings load failed: ${String(error)}`;
+      statusMessage = t("settings.loadFailed", { error: localizedBackendError(error) });
       lastCommandId = "settings.loadFailed";
     }
   }
@@ -3638,7 +3704,7 @@
       applyLoadedAppearanceSettings(await getAppearanceSettings(invoke));
       lastCommandId = "appearance.load";
     } catch (error) {
-      statusMessage = `Appearance settings load failed: ${String(error)}`;
+      statusMessage = t("settings.appearanceLoadFailed", { error: localizedBackendError(error) });
       lastCommandId = "appearance.loadFailed";
     }
   }
@@ -3648,8 +3714,18 @@
       keybindSettings = await getKeybindSettings(invoke);
       lastCommandId = "keybind.load";
     } catch (error) {
-      statusMessage = `Keybind settings load failed: ${String(error)}`;
+      statusMessage = t("settings.keybindLoadFailed", { error: localizedBackendError(error) });
       lastCommandId = "keybind.loadFailed";
+    }
+  }
+
+  async function loadLanguageSettings(): Promise<void> {
+    try {
+      languageSettings = await getLanguageSettings(invoke);
+      lastCommandId = "language.load";
+    } catch (error) {
+      statusMessage = t("settings.loadFailed", { error: localizedBackendError(error) });
+      lastCommandId = "language.loadFailed";
     }
   }
 
@@ -3670,11 +3746,11 @@
       keybindSettings = loadedKeybind;
       languageSettings = loadedLanguage;
       languagePresets = loadedPresets;
-      statusMessage = "Preferences opened.";
+      statusMessage = t("preferences.statusOpened");
       lastCommandId = "preferences.open";
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `Preferences load failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusLoadFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.loadFailed";
     } finally {
       preferencesLoading = false;
@@ -3686,11 +3762,11 @@
     preferencesError = "";
     try {
       appSettings = await saveAppSettings(invoke, settings);
-      statusMessage = "General settings saved.";
+      statusMessage = t("preferences.statusGeneralSaved");
       lastCommandId = "preferences.saveGeneral";
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `General settings save failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusGeneralSaveFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.saveGeneralFailed";
     } finally {
       preferencesLoading = false;
@@ -3702,11 +3778,11 @@
     preferencesError = "";
     try {
       applyLoadedAppearanceSettings(await saveAppearanceSettings(invoke, settings));
-      statusMessage = "Appearance settings saved.";
+      statusMessage = t("preferences.statusAppearanceSaved");
       lastCommandId = "preferences.saveAppearance";
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `Appearance settings save failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusAppearanceSaveFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.saveAppearanceFailed";
     } finally {
       preferencesLoading = false;
@@ -3718,11 +3794,11 @@
     preferencesError = "";
     try {
       keybindSettings = await saveKeybindSettings(invoke, settings);
-      statusMessage = "Keybinding settings saved.";
+      statusMessage = t("preferences.statusKeybindingsSaved");
       lastCommandId = "preferences.saveKeybindings";
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `Keybinding settings save failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusKeybindingsSaveFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.saveKeybindingsFailed";
     } finally {
       preferencesLoading = false;
@@ -3734,11 +3810,11 @@
     preferencesError = "";
     try {
       languageSettings = await applyLanguagePreset(invoke, locale);
-      statusMessage = `Language file applied: ${languageSettings.locale}`;
+      statusMessage = t("preferences.statusLanguageApplied", { locale: languageSettings.locale });
       lastCommandId = "preferences.applyLanguage";
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `Language file apply failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusLanguageApplyFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.applyLanguageFailed";
     } finally {
       preferencesLoading = false;
@@ -3750,11 +3826,11 @@
     preferencesError = "";
     try {
       await openConfigDirectory(invoke);
-      statusMessage = "Config directory opened.";
+      statusMessage = t("preferences.statusConfigDirectoryOpened");
       lastCommandId = "preferences.openConfigDirectory";
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `Open config directory failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusConfigDirectoryFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.openConfigDirectoryFailed";
     } finally {
       preferencesLoading = false;
@@ -3774,11 +3850,11 @@
       } else {
         languageSettings = await resetLanguageSettings(invoke);
       }
-      statusMessage = "Settings reset. Previous config files were backed up.";
+      statusMessage = t("preferences.statusReset");
       lastCommandId = `preferences.reset.${target}`;
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `Settings reset failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusResetFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.resetFailed";
     } finally {
       preferencesLoading = false;
@@ -3794,11 +3870,11 @@
       applyLoadedAppearanceSettings(await getAppearanceSettings(invoke));
       keybindSettings = await getKeybindSettings(invoke);
       languageSettings = await getLanguageSettings(invoke);
-      statusMessage = `${status.message} Backups: ${status.backupPaths.length}`;
+      statusMessage = t("preferences.statusSafeMode", { message: localizedSafeModeMessage(status), count: status.backupPaths.length });
       lastCommandId = "preferences.safeMode";
     } catch (error) {
-      preferencesError = String(error);
-      statusMessage = `Safe Mode failed: ${String(error)}`;
+      preferencesError = localizedBackendError(error);
+      statusMessage = t("preferences.statusSafeModeFailed", { error: localizedBackendError(error) });
       lastCommandId = "preferences.safeModeFailed";
     } finally {
       preferencesLoading = false;
@@ -3809,11 +3885,19 @@
     try {
       const status = await getSafeModeStatus(invoke);
       if (!status.active) return;
-      statusMessage = `${status.message} Backups: ${status.backupPaths.length}`;
+      statusMessage = t("preferences.statusSafeMode", { message: localizedSafeModeMessage(status), count: status.backupPaths.length });
       lastCommandId = "safeMode.startup";
     } catch (error) {
-      statusMessage = `Safe Mode status failed: ${String(error)}`;
+      statusMessage = t("preferences.statusSafeModeStatusFailed", { error: localizedBackendError(error) });
       lastCommandId = "safeMode.statusFailed";
+    }
+  }
+
+  async function loadTerminalShellKind(): Promise<void> {
+    try {
+      terminalShellKind = await getTerminalShellKind(invoke);
+    } catch {
+      terminalShellKind = isWindowsPlatform() ? "unknown" : "posix";
     }
   }
 
@@ -3855,7 +3939,9 @@
     void loadAppSettings();
     void loadAppearanceSettings();
     void loadKeybindSettings();
+    void loadLanguageSettings();
     void loadSafeModeStatus();
+    void loadTerminalShellKind();
     void ensureSftpProfilesLoaded();
     void initializePanes();
 
@@ -3888,7 +3974,7 @@
       consoleCwd = home;
       await Promise.all([loadDirectory("left", home), loadDirectory("right", home)]);
     } catch (error) {
-      const message = `Initialization failed: ${String(error)}`;
+      const message = t("status.initializationFailed", { error: localizedBackendError(error) });
       updatePane("left", { loading: false, error: message });
       updatePane("right", { loading: false, error: message });
       statusMessage = message;
@@ -3909,7 +3995,7 @@
   tabindex="-1"
   style={`--console-height: ${consoleVisible ? defaultConsoleHeightRatio * 100 : 0}%`}
 >
-  <section class="pane-grid" aria-label="File panes">
+  <section class="pane-grid" aria-label={t("pane.filePanesAria")}>
     {#each (["left", "right"] as PaneId[]) as paneId}
       {@const pane = panes[paneId]}
       {@const visible = visibleEntries(pane)}
@@ -3919,8 +4005,8 @@
         visibleEntries={visible}
         virtualWindow={virtualEntryWindow(paneId, visible)}
         rowHeight={fileRowHeightSetting(appearanceSettings)}
-        headerLabel={paneHeaderLabel(pane)}
-        meta={paneMeta(pane, visible)}
+        headerLabel={paneHeaderLabel(pane, t)}
+        meta={paneMeta(pane, visible, t)}
         {showParentEntry}
         {registerList}
         {registerFilterInput}
@@ -3931,6 +4017,7 @@
         entryNameStyle={entryNameStyleWithAppearance}
         {formatSize}
         {formatDate}
+        {t}
       />
     {/each}
   </section>
@@ -3940,6 +4027,7 @@
     fullscreen={terminalFullscreen}
     visible={consoleVisible}
     bind:terminalElement
+    {t}
   />
 
   <StatusBar
@@ -3954,6 +4042,7 @@
     {lastCommandId}
     {lastKey}
     {moveCursorAfterSelection}
+    {t}
   />
 
   {#if viewer}
@@ -3962,15 +4051,16 @@
       bind:surface={viewerElement}
       pageSize={viewerPageSize()}
       onImageLoad={handleViewerImageLoad}
+      {t}
     />
   {/if}
 
   {#if keyHelpVisible}
-    <KeyHelpOverlay groups={keyHelpGroups(keybindSettings)} />
+    <KeyHelpOverlay groups={keyHelpGroups(keybindSettings, t)} {t} />
   {/if}
 
   {#if pendingLargeSearchResult}
-    <LargeSearchResultDialog pending={pendingLargeSearchResult} />
+    <LargeSearchResultDialog pending={pendingLargeSearchResult} {t} />
   {/if}
 
   {#if searchDialogOpen}
@@ -3982,6 +4072,7 @@
       onFormPatch={updateSearchForm}
       onCompositionStart={() => (imeComposing = true)}
       onCompositionEnd={() => (imeComposing = false)}
+      {t}
     />
   {/if}
 
@@ -4007,6 +4098,7 @@
       onAuthKindChange={updateSftpAuthKind}
       onCompositionStart={() => (imeComposing = true)}
       onCompositionEnd={() => (imeComposing = false)}
+      {t}
     />
   {/if}
 
@@ -4018,19 +4110,20 @@
       cursorIndex={externalCommandCursorIndex}
       sourceKind={panes[activePaneId].source.kind}
       targetCount={selectedLocalCommandTargets().length}
+      {t}
     />
   {/if}
 
   {#if operationFailureDialog}
-    <OperationFailureDialog snapshot={operationFailureDialog} />
+    <OperationFailureDialog snapshot={operationFailureDialog} {t} />
   {/if}
 
   {#if filePropertiesDialog}
-    <FilePropertiesDialog snapshot={filePropertiesDialog} />
+    <FilePropertiesDialog snapshot={filePropertiesDialog} {t} />
   {/if}
 
   {#if paneDiffDialog}
-    <PaneDiffDialog snapshot={paneDiffDialog} bind:listElement={paneDiffListElement} />
+    <PaneDiffDialog snapshot={paneDiffDialog} bind:listElement={paneDiffListElement} {t} />
   {/if}
 
   {#if preferencesDialogOpen}
@@ -4053,6 +4146,7 @@
       onApplyLanguagePreset={applyPreferencesLanguagePreset}
       onReset={resetPreferencesSettings}
       onEnterSafeMode={enterPreferencesSafeMode}
+      {t}
     />
   {/if}
 
@@ -4066,13 +4160,14 @@
       doubleEscEnabled={appSettings.operationCancel.doubleEscEnabled}
       bind:nameInputElement={operationNameInputElement}
       executionMessage={executionConfirmationMessage(operationJob)}
-      targetSummary={targetSummary(operationJob)}
+      targetSummary={targetSummary(operationJob, t)}
       showPaths={shouldShowOperationPaths(operationJob)}
       nameRequired={operationNameRequired(operationJob)}
       previewLimit={operationTargetPreviewLimit(operationJob)}
       conflictMessages={operationConflictMessages(operationJob)}
       safetyMessages={operationSafetyMessages(operationJob)}
       onNameInput={updateOperationName}
+      {t}
     />
   {/if}
 </main>

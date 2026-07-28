@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SearchDialogForm, SearchHiddenMode, SearchKind, SearchReadonlyMode } from "./types";
+  import type { Translate } from "./localization";
 
   export let form: SearchDialogForm;
   export let running = false;
@@ -8,6 +9,7 @@
   export let onFormPatch: (patch: Partial<SearchDialogForm>) => void;
   export let onCompositionStart: () => void;
   export let onCompositionEnd: () => void;
+  export let t: Translate = (id) => id;
 </script>
 
 <div class="dialog-backdrop" role="presentation">
@@ -19,11 +21,11 @@
     aria-describedby="search-dialog-message"
   >
     <header class="confirm-dialog-header">
-      <div id="search-dialog-title">Search Source</div>
-      <div class="confirm-risk">local</div>
+      <div id="search-dialog-title">{t("search.dialogTitle")}</div>
+      <div class="confirm-risk">{t("search.badge.local")}</div>
     </header>
     <div id="search-dialog-message" class="confirm-message">
-      Create a virtual result source from local entries. Quick filter remains available inside the result.
+      {t("search.dialogMessage")}
     </div>
     <div
       class="search-fields"
@@ -31,7 +33,7 @@
       oncompositionend={onCompositionEnd}
     >
       <label>
-        <span>root</span>
+        <span>{t("search.root")}</span>
         <input
           value={form.rootPath}
           spellcheck="false"
@@ -40,7 +42,7 @@
         />
       </label>
       <label>
-        <span>name regex</span>
+        <span>{t("search.nameRegex")}</span>
         <input
           bind:this={regexInputElement}
           value={form.nameRegex}
@@ -50,29 +52,29 @@
         />
       </label>
       <label class="search-checkbox">
-        <span>recursive</span>
+        <span>{t("search.recursive")}</span>
         <input
           checked={form.recursive}
           type="checkbox"
           onchange={(event) => onFormPatch({ recursive: event.currentTarget.checked })}
         />
-        <span>include child directories</span>
+        <span>{t("search.includeChildDirectories")}</span>
       </label>
       <label>
-        <span>kind</span>
+        <span>{t("search.kind")}</span>
         <select
           value={form.kind}
           onchange={(event) => onFormPatch({ kind: event.currentTarget.value as SearchKind })}
         >
-          <option value="all">all</option>
-          <option value="file">file</option>
-          <option value="directory">directory</option>
-          <option value="symlink">symlink</option>
-          <option value="other">other</option>
+          <option value="all">{t("search.kind.all")}</option>
+          <option value="file">{t("search.kind.file")}</option>
+          <option value="directory">{t("search.kind.directory")}</option>
+          <option value="symlink">{t("search.kind.symlink")}</option>
+          <option value="other">{t("search.kind.other")}</option>
         </select>
       </label>
       <label>
-        <span>min size</span>
+        <span>{t("search.minSize")}</span>
         <input
           value={form.minSizeBytes}
           placeholder="10m"
@@ -82,7 +84,7 @@
         />
       </label>
       <label>
-        <span>max size</span>
+        <span>{t("search.maxSize")}</span>
         <input
           value={form.maxSizeBytes}
           placeholder="1g"
@@ -92,56 +94,56 @@
         />
       </label>
       <label>
-        <span>modified after</span>
+        <span>{t("search.modifiedAfter")}</span>
         <input
           value={form.modifiedAfter}
-          placeholder="YYYYMMDD"
+          placeholder={t("search.placeholder.date")}
           spellcheck="false"
           autocomplete="off"
           oninput={(event) => onFormPatch({ modifiedAfter: event.currentTarget.value })}
         />
       </label>
       <label>
-        <span>modified before</span>
+        <span>{t("search.modifiedBefore")}</span>
         <input
           value={form.modifiedBefore}
-          placeholder="YYYYMMDD"
+          placeholder={t("search.placeholder.date")}
           spellcheck="false"
           autocomplete="off"
           oninput={(event) => onFormPatch({ modifiedBefore: event.currentTarget.value })}
         />
       </label>
       <label>
-        <span>hidden</span>
+        <span>{t("search.hidden")}</span>
         <select
           value={form.hiddenMode}
           onchange={(event) => onFormPatch({ hiddenMode: event.currentTarget.value as SearchHiddenMode })}
         >
-          <option value="exclude">exclude</option>
-          <option value="include">include</option>
-          <option value="only">only</option>
+          <option value="exclude">{t("search.hidden.exclude")}</option>
+          <option value="include">{t("search.hidden.include")}</option>
+          <option value="only">{t("search.hidden.only")}</option>
         </select>
       </label>
       <label>
-        <span>readonly</span>
+        <span>{t("search.readonly")}</span>
         <select
           value={form.readonlyMode}
           onchange={(event) => onFormPatch({ readonlyMode: event.currentTarget.value as SearchReadonlyMode })}
         >
-          <option value="any">any</option>
-          <option value="readonly">readonly</option>
-          <option value="writable">writable</option>
+          <option value="any">{t("search.readonly.any")}</option>
+          <option value="readonly">{t("search.readonly.readonly")}</option>
+          <option value="writable">{t("search.readonly.writable")}</option>
         </select>
       </label>
     </div>
     {#if error}
       <div class="operation-result confirm-result">
-        <div class="result-failed">-: {error}</div>
+        <div class="result-failed">{t("common.error")}: {error}</div>
       </div>
     {/if}
     <div class="confirm-shortcuts">
-      <span>{running ? "Searching..." : "Search: Enter"}</span>
-      <span>Cancel: Esc</span>
+      <span>{running ? t("search.searching") : t("search.shortcutSearch")}</span>
+      <span>{t("shortcut.cancelEsc")}</span>
     </div>
   </div>
 </div>

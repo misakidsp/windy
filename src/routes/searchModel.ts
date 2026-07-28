@@ -1,4 +1,5 @@
 import { parentDirectoryFromArchivePath } from "./pathUtils";
+import { translateMessage, type Translate } from "./localization";
 import type {
   PaneState,
   SearchDialogForm,
@@ -6,6 +7,8 @@ import type {
   SearchPaneSource,
   SearchProfile,
 } from "./types";
+
+const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
 
 export function createEmptySearchForm(): SearchDialogForm {
   return {
@@ -88,17 +91,21 @@ export function searchFormFromRequest(request: SearchDirectoryRequest): SearchDi
   };
 }
 
-export function searchRequestFromForm(form: SearchDialogForm): SearchDirectoryRequest {
-  const minSizeBytes = parseOptionalSizeBytes("min size", form.minSizeBytes);
-  const maxSizeBytes = parseOptionalSizeBytes("max size", form.maxSizeBytes);
+export function searchRequestFromForm(form: SearchDialogForm, t: Translate = fallbackTranslate): SearchDirectoryRequest {
+  const minSizeLabel = t("search.field.minSize");
+  const maxSizeLabel = t("search.field.maxSize");
+  const modifiedAfterLabel = t("search.field.modifiedAfter");
+  const modifiedBeforeLabel = t("search.field.modifiedBefore");
+  const minSizeBytes = parseOptionalSizeBytes(minSizeLabel, form.minSizeBytes, t);
+  const maxSizeBytes = parseOptionalSizeBytes(maxSizeLabel, form.maxSizeBytes, t);
   if (minSizeBytes !== null && maxSizeBytes !== null && minSizeBytes > maxSizeBytes) {
-    throw new Error("min size must be less than or equal to max size");
+    throw new Error(t("search.error.sizeRange"));
   }
 
-  const modifiedAfter = parseOptionalDate("modified after", form.modifiedAfter, false);
-  const modifiedBefore = parseOptionalDate("modified before", form.modifiedBefore, true);
+  const modifiedAfter = parseOptionalDate(modifiedAfterLabel, form.modifiedAfter, false, t);
+  const modifiedBefore = parseOptionalDate(modifiedBeforeLabel, form.modifiedBefore, true, t);
   if (modifiedAfter !== null && modifiedBefore !== null && modifiedAfter > modifiedBefore) {
-    throw new Error("modified after must be less than or equal to modified before");
+    throw new Error(t("search.error.dateRange"));
   }
 
   return {
@@ -115,8 +122,8 @@ export function searchRequestFromForm(form: SearchDialogForm): SearchDirectoryRe
   };
 }
 
-export function searchProfileNameFromSource(source: SearchPaneSource): string {
-  const rootName = localNameFromPath(source.rootPath);
+export function searchProfileNameFromSource(source: SearchPaneSource, t: Translate = fallbackTranslate): string {
+  const rootName = localNameFromPath(source.rootPath, t);
   const query = source.nameRegex || "*";
   return `${rootName} ${query}`;
 }
@@ -136,12 +143,12 @@ export function searchProfileMatchesSource(profile: SearchProfile, source: Searc
   );
 }
 
-export function parseOptionalSizeBytes(label: string, value: string): number | null {
+export function parseOptionalSizeBytes(label: string, value: string, t: Translate = fallbackTranslate): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   const match = trimmed.match(/^(\d+)([kmgtKMGT]?)$/);
   if (!match) {
-    throw new Error(`${label} must be a non-negative value with optional K/M/G/T suffix`);
+    throw new Error(t("search.error.nonNegativeSize", { label }));
   }
   const valuePart = Number(match[1]);
   const unit = match[2].toLowerCase();
@@ -157,26 +164,26 @@ export function parseOptionalSizeBytes(label: string, value: string): number | n
             : 1;
   const parsed = valuePart * multiplier;
   if (!Number.isSafeInteger(parsed)) {
-    throw new Error(`${label} is too large`);
+    throw new Error(t("search.error.sizeTooLarge", { label }));
   }
   return parsed;
 }
 
-export function parseOptionalDate(label: string, value: string, endOfDay: boolean): number | null {
+export function parseOptionalDate(label: string, value: string, endOfDay: boolean, t: Translate = fallbackTranslate): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (!/^\d{8}$/.test(trimmed)) {
-    throw new Error(`${label} must be YYYYMMDD`);
+    throw new Error(t("search.error.dateFormat", { label }));
   }
   const normalized = `${trimmed.slice(0, 4)}-${trimmed.slice(4, 6)}-${trimmed.slice(6, 8)}`;
   const suffix = endOfDay ? "T23:59:59" : "T00:00:00";
   const date = new Date(`${normalized}${suffix}`);
   if (Number.isNaN(date.getTime())) {
-    throw new Error(`${label} is invalid`);
+    throw new Error(t("search.error.dateInvalid", { label }));
   }
   const seconds = Math.floor(date.getTime() / 1000);
   if (seconds < 0) {
-    throw new Error(`${label} must be 1970-01-01 or later`);
+    throw new Error(t("search.error.dateTooEarly", { label }));
   }
   return seconds;
 }
@@ -191,8 +198,8 @@ function timestampToDateInput(value: number | null): string {
   return `${year}${month}${day}`;
 }
 
-function localNameFromPath(path: string): string {
+function localNameFromPath(path: string, t: Translate = fallbackTranslate): string {
   const normalized = path.replace(/[/\\]+$/, "");
-  if (!normalized || normalized === "/") return "Root";
+  if (!normalized || normalized === "/") return t("search.rootLabel");
   return normalized.split(/[/\\]/).filter(Boolean).at(-1) ?? normalized;
 }

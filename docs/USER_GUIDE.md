@@ -85,13 +85,16 @@ Inside an archive, `c` extracts selected entries to the opposite local pane.
 
 | Key | Action |
 | --- | --- |
-| `/` | Quick filter in the current pane |
+| `up` again at the first row | Quick filter in the current pane |
 | `ctrl+f` | Open detailed local search |
 | `s` | Change sorting |
 | `.` | Toggle hidden files |
 
 Detailed search creates a search result pane. Search result entries can be
 opened or copied like regular local entries where supported.
+
+Search results stop at 10,000 entries. Unreadable child directories are reported
+as errors instead of silently returning incomplete results.
 
 ## Diff And Git
 
@@ -141,6 +144,10 @@ SFTP pane operations:
 Windy uses OpenSSH-compatible `known_hosts` verification. If a host key changes,
 Windy refuses the connection until you verify the server and update
 `known_hosts` yourself.
+
+During local/SFTP copy and archive extraction, `esc` opens the cancellation
+confirmation. Windy checks cancellation between directory entries and file
+chunks and removes incomplete output where possible.
 
 ## Terminal
 
@@ -205,10 +212,15 @@ Windy creates the files when it first needs them. The main files are:
 | `settings/keybind.json` | Editable key bindings |
 | `settings/language.json` | UI message overrides and locale |
 
+Settings files are replaced atomically. Windy rejects unsupported future
+`schemaVersion` values and unknown fields without rewriting the original file.
+`operation-failures.log` rotates to `.1` when it grows beyond 5 MiB.
+
 Example `settings/operation.json`:
 
 ```json
 {
+  "schemaVersion": 1,
   "useTrash": true,
   "operationResult": {
     "showStatus": true,
@@ -259,6 +271,7 @@ Example `settings/sftp.json`:
 
 ```json
 {
+  "schemaVersion": 1,
   "sftpSession": {
     "lifecycle": "keepRecent",
     "maxSessions": 2,
@@ -305,6 +318,10 @@ Example `commands.json`:
   ]
 }
 ```
+
+The example above is POSIX-shell syntax. First-run samples are selected for the
+active shell: POSIX shell, PowerShell, or `cmd`. Windy refuses to expand command
+templates when it cannot identify a safe quoting strategy for the shell.
 
 Common external command placeholders include:
 

@@ -1,28 +1,45 @@
 import type { CommandTarget, ExternalCommandDefinition, FileEntry, PaneState } from "./types";
+import type { TerminalShellKind } from "./terminalSideEffects";
 
 export type ExternalCommandContext = {
   activePane: PaneState;
   otherPane: PaneState;
   activeMarked: CommandTarget[];
   otherMarked: CommandTarget[];
-  isWindows: boolean;
+  shellKind: TerminalShellKind;
 };
 
 export function clampExternalCommandCursor(index: number, commandCount: number): number {
   return Math.min(Math.max(index, 0), Math.max(commandCount - 1, 0));
 }
 
-export function shellQuotePath(path: string, isWindows: boolean): string {
-  if (isWindows) return `'${path.replace(/'/g, "''")}'`;
-  return `'${path.replace(/'/g, `'\\''`)}'`;
+export class ShellQuoteError extends Error {
+  readonly code: "cmdUnsafePath" | "unknownShell";
+  readonly value: string;
+
+  constructor(code: "cmdUnsafePath" | "unknownShell", value: string) {
+    super(code);
+    this.code = code;
+    this.value = value;
+  }
 }
 
-export function clipboardTextForCommandTargets(targets: CommandTarget[], isWindows: boolean): string {
-  return targets.map((target) => shellQuotePath(target.path, isWindows)).join(" ");
+export function shellQuotePath(path: string, shellKind: TerminalShellKind): string {
+  if (shellKind === "powershell") return `'${path.replace(/'/g, "''")}'`;
+  if (shellKind === "cmd") {
+    if (/[%!\r\n]/.test(path)) throw new ShellQuoteError("cmdUnsafePath", path);
+    return `"${path}"`;
+  }
+  if (shellKind === "posix") return `'${path.replace(/'/g, `'\\''`)}'`;
+  throw new ShellQuoteError("unknownShell", path);
 }
 
-export function clipboardNameTextForCommandTargets(targets: CommandTarget[], isWindows: boolean): string {
-  return targets.map((target) => shellQuotePath(target.name, isWindows)).join(" ");
+export function clipboardTextForCommandTargets(targets: CommandTarget[], shellKind: TerminalShellKind): string {
+  return targets.map((target) => shellQuotePath(target.path, shellKind)).join(" ");
+}
+
+export function clipboardNameTextForCommandTargets(targets: CommandTarget[], shellKind: TerminalShellKind): string {
+  return targets.map((target) => shellQuotePath(target.name, shellKind)).join(" ");
 }
 
 export function selectedEntriesForPane(pane: PaneState, visibleEntries: FileEntry[]): FileEntry[] {
@@ -70,7 +87,7 @@ export function externalCommandLines(
     return targets.map((target, index) =>
       replaceTemplateVariables(command.template, {
         ...externalCommandVariables([target], context),
-        ...targetVariables(target, index, context.isWindows),
+        ...targetVariables(target, index, context.shellKind),
       }),
     );
   }
@@ -82,7 +99,7 @@ export function externalCommandLines(
         externalCommandVariables(
           targets,
           context,
-          shellQuoteLiteral(joinedCommandItems(command, targets, context.isWindows), context.isWindows),
+          shellQuoteLiteral(joinedCommandItems(command, targets, context.shellKind), context.shellKind),
         ),
       ),
     ];
@@ -96,17 +113,17 @@ export function externalCommandVariables(
   context: ExternalCommandContext,
   items = "",
 ): Record<string, string> {
-  const args = quotedPaths(targets, context.isWindows);
-  const names = quotedNames(targets, context.isWindows);
-  const marked = quotedPaths(context.activeMarked, context.isWindows);
-  const markedNames = quotedNames(context.activeMarked, context.isWindows);
-  const otherMarkedPaths = quotedPaths(context.otherMarked, context.isWindows);
-  const otherMarkedNames = quotedNames(context.otherMarked, context.isWindows);
-  const first = targets[0]?.path ? shellQuoteLiteral(targets[0].path, context.isWindows) : "";
-  const cwd = shellQuoteLiteral(context.activePane.currentPath || ".", context.isWindows);
+  const args = quotedPaths(targets, context.shellKind);
+  const names = quotedNames(targets, context.shellKind);
+  const marked = quotedPaths(context.activeMarked, context.shellKind);
+  const markedNames = quotedNames(context.activeMarked, context.shellKind);
+  const otherMarkedPaths = quotedPaths(context.otherMarked, context.shellKind);
+  const otherMarkedNames = quotedNames(context.otherMarked, context.shellKind);
+  const first = targets[0]?.path ? shellQuoteLiteral(targets[0].path, context.shellKind) : "";
+  const cwd = shellQuoteLiteral(context.activePane.currentPath || ".", context.shellKind);
   const otherCwd = shellQuoteLiteral(
     context.otherPane.source.kind === "local" ? context.otherPane.currentPath || "." : "",
-    context.isWindows,
+    context.shellKind,
   );
 
   return {
@@ -126,10 +143,10 @@ export function externalCommandVariables(
   };
 }
 
-export function targetVariables(target: CommandTarget, index: number, isWindows: boolean): Record<string, string> {
+export function targetVariables(target: CommandTarget, index: number, shellKind: TerminalShellKind): Record<string, string> {
   return {
-    path: shellQuoteLiteral(target.path, isWindows),
-    name: shellQuoteLiteral(target.name, isWindows),
+    path: shellQuoteLiteral(target.path, shellKind),
+    name: shellQuoteLiteral(target.name, shellKind),
     rawPath: target.path,
     rawName: target.name,
     index: String(index + 1),
@@ -146,25 +163,25 @@ export function replaceTemplateVariables(template: string, variables: Record<str
   return line;
 }
 
-function shellQuoteLiteral(value: string, isWindows: boolean): string {
-  return shellQuotePath(value, isWindows);
+function shellQuoteLiteral(value: string, shellKind: TerminalShellKind): string {
+  return shellQuotePath(value, shellKind);
 }
 
-function quotedPaths(targets: CommandTarget[], isWindows: boolean): string {
-  return targets.map((target) => shellQuoteLiteral(target.path, isWindows)).join(" ");
+function quotedPaths(targets: CommandTarget[], shellKind: TerminalShellKind): string {
+  return targets.map((target) => shellQuoteLiteral(target.path, shellKind)).join(" ");
 }
 
-function quotedNames(targets: CommandTarget[], isWindows: boolean): string {
-  return targets.map((target) => shellQuoteLiteral(target.name, isWindows)).join(" ");
+function quotedNames(targets: CommandTarget[], shellKind: TerminalShellKind): string {
+  return targets.map((target) => shellQuoteLiteral(target.name, shellKind)).join(" ");
 }
 
 function decodedSeparator(separator: string | undefined): string {
   return (separator ?? " ").replaceAll("\\n", "\n").replaceAll("\\t", "\t");
 }
 
-function joinedCommandItems(command: ExternalCommandDefinition, targets: CommandTarget[], isWindows: boolean): string {
+function joinedCommandItems(command: ExternalCommandDefinition, targets: CommandTarget[], shellKind: TerminalShellKind): string {
   const itemTemplate = command.itemTemplate ?? "{path}";
   return targets
-    .map((target, index) => replaceTemplateVariables(itemTemplate, targetVariables(target, index, isWindows)))
+    .map((target, index) => replaceTemplateVariables(itemTemplate, targetVariables(target, index, shellKind)))
     .join(decodedSeparator(command.itemSeparator));
 }

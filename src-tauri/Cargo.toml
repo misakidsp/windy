@@ -1,10 +1,11 @@
 [package]
 name = "windy"
-version = "0.2.2"
+version = "0.2.3"
 description = "Keyboard-first dual-pane file manager prototype."
 authors = ["misakidsp"]
 edition = "2021"
 license-file = "../LICENSE"
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -22,6 +23,7 @@ tauri-build = { version = "~2.6.1", features = [] }
 tauri = { version = "~2.11.1", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "~3.27.0"
 dirs = "~6.0.0"
 encoding_rs = "~0.8.35"
 flate2 = "~1.1.9"
@@ -38,6 +40,3 @@ ssh2 = { version = "~0.9.5", features = ["vendored-openssl"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ssh2 = "~0.9.5"
-
-[dev-dependencies]
-tempfile = "~3.27.0"

@@ -1,77 +1,85 @@
 <script lang="ts">
   import { formatByteCount, formatDate } from "./displayModel";
-  import { formatPropertyBoolean, formatPropertyMode, type FilePropertySnapshot } from "./propertyModel";
+  import type { Translate } from "./localization";
+  import { formatPropertyBoolean, formatPropertyEntryKind, formatPropertyMode, formatPropertySourceKind, type FilePropertySnapshot } from "./propertyModel";
+  import type { EntryKind } from "./types";
 
   export let snapshot: FilePropertySnapshot;
+  export let t: Translate = (id, values) => {
+    if (!values) return id;
+    return id.replace(/\{([a-zA-Z0-9_.-]+)\}/g, (match, key) => (
+      values[key] === undefined ? match : String(values[key])
+    ));
+  };
 
   $: primaryItem = snapshot.items[0];
   $: kindSummary = Object.entries(snapshot.kindCounts)
     .filter(([, count]) => count > 0)
-    .map(([kind, count]) => `${kind}: ${count}`)
+    .map(([kind, count]) => `${formatPropertyEntryKind(kind as EntryKind, t)}: ${count}`)
     .join(" / ");
 </script>
 
 <div class="dialog-backdrop" role="presentation">
   <div class="property-dialog" role="dialog" aria-modal="true" aria-labelledby="property-title">
     <header class="property-header">
-      <div id="property-title">Properties</div>
+      <div id="property-title">{t("properties.title")}</div>
       <div class="property-source">{snapshot.sourceLabel}</div>
     </header>
 
     {#if snapshot.totalCount === 1 && primaryItem}
       <dl class="property-grid">
-        <dt>Name</dt>
+        <dt>{t("properties.name")}</dt>
         <dd title={primaryItem.name}>{primaryItem.name}</dd>
-        <dt>Path</dt>
+        <dt>{t("properties.path")}</dt>
         <dd title={primaryItem.path}>{primaryItem.path}</dd>
-        <dt>Source</dt>
-        <dd>{snapshot.sourceKind}</dd>
-        <dt>Kind</dt>
-        <dd>{primaryItem.kind}</dd>
-        <dt>Size</dt>
-        <dd>{primaryItem.kind === "directory" && primaryItem.size === null ? "<DIR>" : formatByteCount(primaryItem.size) || "unknown"}</dd>
-        <dt>Modified</dt>
+        <dt>{t("properties.source")}</dt>
+        <dd>{formatPropertySourceKind(snapshot.sourceKind, t)}</dd>
+        <dt>{t("properties.kind")}</dt>
+        <dd>{formatPropertyEntryKind(primaryItem.kind, t)}</dd>
+        <dt>{t("properties.size")}</dt>
+        <dd>{primaryItem.kind === "directory" && primaryItem.size === null ? t("properties.directoryMarker") : formatByteCount(primaryItem.size) || t("properties.unknown")}</dd>
+        <dt>{t("properties.modified")}</dt>
         <dd>{formatDate(primaryItem.modifiedAt) || "-"}</dd>
-        <dt>Hidden</dt>
-        <dd>{formatPropertyBoolean(primaryItem.hidden)}</dd>
-        <dt>Readonly</dt>
-        <dd>{formatPropertyBoolean(primaryItem.readonly)}</dd>
-        <dt>Mode</dt>
+        <dt>{t("properties.hidden")}</dt>
+        <dd>{formatPropertyBoolean(primaryItem.hidden, t)}</dd>
+        <dt>{t("properties.readonly")}</dt>
+        <dd>{formatPropertyBoolean(primaryItem.readonly, t)}</dd>
+        <dt>{t("properties.mode")}</dt>
         <dd>{formatPropertyMode(primaryItem.mode)}</dd>
       </dl>
     {:else}
       <dl class="property-grid">
-        <dt>Items</dt>
+        <dt>{t("properties.items")}</dt>
         <dd>{snapshot.totalCount}</dd>
-        <dt>Source</dt>
-        <dd>{snapshot.sourceKind}</dd>
-        <dt>Total size</dt>
+        <dt>{t("properties.source")}</dt>
+        <dd>{formatPropertySourceKind(snapshot.sourceKind, t)}</dd>
+        <dt>{t("properties.totalSize")}</dt>
         <dd>
           {formatByteCount(snapshot.knownSizeBytes)}
           {#if snapshot.unknownSizeCount > 0}
-            <span class="muted"> / {snapshot.unknownSizeCount} unknown</span>
+            <span class="muted"> / {t("properties.unknownCount", { count: snapshot.unknownSizeCount })}</span>
           {/if}
         </dd>
-        <dt>Kinds</dt>
+        <dt>{t("properties.kinds")}</dt>
         <dd>{kindSummary || "-"}</dd>
       </dl>
 
-      <div class="property-list" aria-label="Selected items">
+      <div class="property-list" aria-label={t("properties.selectedItems")}>
         {#each snapshot.items.slice(0, 10) as item}
           <div class="property-list-row" title={item.path}>
             <span>{item.name}</span>
-            <span>{item.kind}</span>
+            <span>{formatPropertyEntryKind(item.kind, t)}</span>
           </div>
         {/each}
         {#if snapshot.items.length > 10}
-          <div class="property-more">...and {snapshot.items.length - 10} more</div>
+          <div class="property-more">{t("common.andMore", { count: snapshot.items.length - 10 })}</div>
         {/if}
       </div>
     {/if}
 
     <div class="property-shortcuts">
-      <span>Close: Enter</span>
-      <span>Close: Esc</span>
+      <span>{t("shortcut.closeEnter")}</span>
+      <span>{t("shortcut.closeEsc")}</span>
     </div>
   </div>
 </div>

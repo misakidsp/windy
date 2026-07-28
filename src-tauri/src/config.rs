@@ -1,4 +1,5 @@
 use crate::file_ops::FileOperationResultItem;
+use crate::path_utils::write_file_atomically;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -9,9 +10,10 @@ use std::{
 };
 
 const DEFAULT_KEYBINDINGS_JSON: &str = include_str!("../../src/routes/keybindingDefaults.json");
+const OPERATION_FAILURE_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AppSettings {
     #[serde(default = "default_use_trash")]
     pub(crate) use_trash: bool,
@@ -28,8 +30,10 @@ pub(crate) struct AppSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct OperationSettings {
+    #[serde(default = "default_settings_schema_version")]
+    pub(crate) schema_version: u32,
     #[serde(default = "default_use_trash")]
     pub(crate) use_trash: bool,
     #[serde(default)]
@@ -43,6 +47,7 @@ pub(crate) struct OperationSettings {
 impl Default for OperationSettings {
     fn default() -> Self {
         Self {
+            schema_version: default_settings_schema_version(),
             use_trash: default_use_trash(),
             operation_result: OperationResultSettings::default(),
             operation_cancel: OperationCancelSettings::default(),
@@ -51,17 +56,29 @@ impl Default for OperationSettings {
     }
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SftpSettings {
+    #[serde(default = "default_settings_schema_version")]
+    pub(crate) schema_version: u32,
     #[serde(default)]
     pub(crate) sftp_session: SftpSessionSettings,
     #[serde(default)]
     pub(crate) sftp_transfer: SftpTransferSettings,
 }
 
+impl Default for SftpSettings {
+    fn default() -> Self {
+        Self {
+            schema_version: default_settings_schema_version(),
+            sftp_session: SftpSessionSettings::default(),
+            sftp_transfer: SftpTransferSettings::default(),
+        }
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AppearanceSettings {
     #[serde(default = "default_settings_schema_version")]
     pub(crate) schema_version: u32,
@@ -88,7 +105,7 @@ impl Default for AppearanceSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AppearanceFontSettings {
     #[serde(default = "default_ui_font_family")]
     pub(crate) ui_family: String,
@@ -115,7 +132,7 @@ impl Default for AppearanceFontSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AppearanceLayoutSettings {
     #[serde(default = "default_file_row_height")]
     pub(crate) file_row_height: u16,
@@ -130,7 +147,7 @@ impl Default for AppearanceLayoutSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KeybindSettings {
     #[serde(default = "default_settings_schema_version")]
     pub(crate) schema_version: u32,
@@ -147,7 +164,7 @@ impl Default for KeybindSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LanguageSettings {
     #[serde(default = "default_settings_schema_version")]
     pub(crate) schema_version: u32,
@@ -165,7 +182,7 @@ pub(crate) struct LanguagePresetInfo {
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ExternalEditorSettings {
     #[serde(default)]
     pub(crate) command: String,
@@ -184,7 +201,7 @@ impl Default for LanguageSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct OperationResultSettings {
     #[serde(default = "default_operation_result_show_status")]
     pub(crate) show_status: bool,
@@ -208,7 +225,7 @@ impl Default for OperationResultSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct OperationCancelSettings {
     #[serde(default = "default_operation_cancel_double_esc_enabled")]
     pub(crate) double_esc_enabled: bool,
@@ -239,7 +256,7 @@ impl Default for AppSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SftpSessionSettings {
     #[serde(default = "default_sftp_session_lifecycle")]
     pub(crate) lifecycle: String,
@@ -250,7 +267,7 @@ pub(crate) struct SftpSessionSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SftpTransferSettings {
     #[serde(default = "default_sftp_part_file_threshold_bytes")]
     pub(crate) part_file_threshold_bytes: u64,
@@ -275,7 +292,7 @@ impl Default for SftpSessionSettings {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ExternalCommandDefinition {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -289,7 +306,7 @@ pub(crate) struct ExternalCommandDefinition {
 }
 
 #[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ExternalCommandsFile {
     pub(crate) commands: Vec<ExternalCommandDefinition>,
 }
@@ -504,41 +521,19 @@ fn default_locked_keybindings() -> BTreeMap<String, Vec<String>> {
 }
 
 fn default_language_messages() -> BTreeMap<String, String> {
-    BTreeMap::from([
-        ("dialog.ok".to_string(), "OK".to_string()),
-        ("dialog.cancel".to_string(), "Cancel".to_string()),
-        ("dialog.close".to_string(), "Close".to_string()),
-        (
-            "operation.confirmTitle".to_string(),
-            "Confirm {label}".to_string(),
-        ),
-        (
-            "operation.failedTitle".to_string(),
-            "{label} Failed".to_string(),
-        ),
-        (
-            "operation.executing".to_string(),
-            "Executing...".to_string(),
-        ),
-        ("location.title".to_string(), "Location Manager".to_string()),
-        ("search.title".to_string(), "Search".to_string()),
-        (
-            "externalCommand.title".to_string(),
-            "External Commands".to_string(),
-        ),
-        (
-            "terminal.copyMode".to_string(),
-            "Terminal copy mode: move to select, Enter copies, Esc cancels.".to_string(),
-        ),
-        (
-            "viewer.openFailed".to_string(),
-            "Viewer failed: {error}".to_string(),
-        ),
-        (
-            "settings.loadFailed".to_string(),
-            "Settings load failed: {error}".to_string(),
-        ),
-    ])
+    serde_json::from_str::<LanguageSettings>(include_str!("../../docs/examples/language.en.json"))
+        .map(|settings| settings.messages)
+        .unwrap_or_else(|_| {
+            BTreeMap::from([
+                ("dialog.ok".to_string(), "OK".to_string()),
+                ("dialog.cancel".to_string(), "Cancel".to_string()),
+                ("dialog.close".to_string(), "Close".to_string()),
+                (
+                    "settings.loadFailed".to_string(),
+                    "Settings load failed: {error}".to_string(),
+                ),
+            ])
+        })
 }
 
 pub(crate) fn config_dir() -> Result<PathBuf, String> {
@@ -677,7 +672,8 @@ pub(crate) fn language_presets() -> Vec<LanguagePresetInfo> {
 
 pub(crate) fn language_preset_settings(locale: &str) -> Result<LanguageSettings, String> {
     match locale {
-        "en" => Ok(LanguageSettings::default()),
+        "en" => serde_json::from_str(include_str!("../../docs/examples/language.en.json"))
+            .map_err(|error| format!("Parse English language preset failed: {error}")),
         "ja" => serde_json::from_str(include_str!("../../docs/examples/language.ja.json"))
             .map_err(|error| format!("Parse Japanese language preset failed: {error}")),
         "qya-Latn" => {
@@ -696,13 +692,72 @@ pub(crate) fn save_operation_failure_log(
 }
 
 pub(crate) fn default_external_commands() -> ExternalCommandsFile {
+    default_external_commands_for_shell(crate::terminal::terminal_shell_kind())
+}
+
+fn default_external_commands_for_shell(shell_kind: &str) -> ExternalCommandsFile {
+    let (
+        echo_paths,
+        list_details,
+        show_directories,
+        show_names,
+        show_first,
+        show_marked,
+        show_other_marked,
+        count_lines,
+        repeat_target,
+        join_items,
+        join_separator,
+    ) = match shell_kind {
+        "powershell" => (
+            "Write-Output {args}",
+            "Get-Item -LiteralPath {args} | Format-List",
+            "Write-Output 'active:' {cwd} 'other:' {otherCwd}",
+            "Write-Output {names}",
+            "Write-Output 'first:' {first}",
+            "Write-Output 'paths:' {marked} 'names:' {markedNames}",
+            "Write-Output 'other paths:' {otherMarked} 'other names:' {otherMarkedNames}",
+            "Get-Content -LiteralPath {args} | Measure-Object -Line",
+            "Write-Output 'target:' {path}",
+            "Write-Output {items}",
+            "\\n",
+        ),
+        "cmd" => (
+            "echo {args}",
+            "dir {args}",
+            "echo active: {cwd} & echo other: {otherCwd}",
+            "echo {names}",
+            "echo first: {first}",
+            "echo paths: {marked} & echo names: {markedNames}",
+            "echo other paths: {otherMarked} & echo other names: {otherMarkedNames}",
+            "find /v /c \"\" {args}",
+            "echo target: {path}",
+            "echo {items}",
+            " ",
+        ),
+        "posix" => (
+            "printf '%s\\n' {args}",
+            "ls -ld {args}",
+            "printf 'active: %s\\nother:  %s\\n' {cwd} {otherCwd}",
+            "printf '%s\\n' {names}",
+            "printf 'first: %s\\n' {first}",
+            "printf 'paths:\\n%s\\nnames:\\n%s\\n' {marked} {markedNames}",
+            "printf 'other paths:\\n%s\\nother names:\\n%s\\n' {otherMarked} {otherMarkedNames}",
+            "wc -l {args}",
+            "printf 'target: %s\\n' {path}",
+            "printf 'items:\\n%s\\n' {items}",
+            "\\n",
+        ),
+        _ => return ExternalCommandsFile { commands: vec![] },
+    };
+
     ExternalCommandsFile {
         commands: vec![
             ExternalCommandDefinition {
                 id: "echo-selected-paths".to_string(),
                 name: "Echo selected paths".to_string(),
                 description: "Print selected local paths in the terminal.".to_string(),
-                template: "printf '%s\\n' {args}".to_string(),
+                template: echo_paths.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -711,8 +766,8 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
             ExternalCommandDefinition {
                 id: "list-selected-details".to_string(),
                 name: "List selected details".to_string(),
-                description: "Run ls -ld for selected local paths.".to_string(),
-                template: "ls -ld {args}".to_string(),
+                description: "Show details for selected local paths.".to_string(),
+                template: list_details.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -722,7 +777,7 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
                 id: "show-active-and-other-directory".to_string(),
                 name: "Show active and other directory".to_string(),
                 description: "Demonstrates {cwd} and {otherCwd}.".to_string(),
-                template: "printf 'active: %s\\nother:  %s\\n' {cwd} {otherCwd}".to_string(),
+                template: show_directories.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -732,7 +787,7 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
                 id: "show-selected-names".to_string(),
                 name: "Show selected names".to_string(),
                 description: "Demonstrates {names}.".to_string(),
-                template: "printf '%s\\n' {names}".to_string(),
+                template: show_names.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -742,7 +797,7 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
                 id: "show-first-selection".to_string(),
                 name: "Show first selection".to_string(),
                 description: "Demonstrates {first}.".to_string(),
-                template: "printf 'first: %s\\n' {first}".to_string(),
+                template: show_first.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -753,8 +808,7 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
                 name: "Show marked in active pane".to_string(),
                 description: "Demonstrates {marked} and {markedNames}; empty if nothing is marked."
                     .to_string(),
-                template: "printf 'paths:\\n%s\\nnames:\\n%s\\n' {marked} {markedNames}"
-                    .to_string(),
+                template: show_marked.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -764,7 +818,7 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
                 id: "show-marked-in-other-pane".to_string(),
                 name: "Show marked in other pane".to_string(),
                 description: "Demonstrates {otherMarked} and {otherMarkedNames}.".to_string(),
-                template: "printf 'other paths:\\n%s\\nother names:\\n%s\\n' {otherMarked} {otherMarkedNames}".to_string(),
+                template: show_other_marked.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -773,8 +827,8 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
             ExternalCommandDefinition {
                 id: "count-lines-in-selection".to_string(),
                 name: "Count lines in selection".to_string(),
-                description: "Read-only example that runs wc -l with {args}.".to_string(),
-                template: "wc -l {args}".to_string(),
+                description: "Read-only example that counts lines with {args}.".to_string(),
+                template: count_lines.to_string(),
                 argument_mode: None,
                 item_template: None,
                 item_separator: None,
@@ -783,10 +837,9 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
             ExternalCommandDefinition {
                 id: "repeat-show-each-target".to_string(),
                 name: "Repeat: show each target".to_string(),
-                description:
-                    "Demonstrates argumentMode=repeat by running once per selected path."
-                        .to_string(),
-                template: "printf 'target: %s\\n' {path}".to_string(),
+                description: "Demonstrates argumentMode=repeat by running once per selected path."
+                    .to_string(),
+                template: repeat_target.to_string(),
                 argument_mode: Some("repeat".to_string()),
                 item_template: None,
                 item_separator: None,
@@ -796,10 +849,10 @@ pub(crate) fn default_external_commands() -> ExternalCommandsFile {
                 id: "join-show-item-lines".to_string(),
                 name: "Join: show item lines".to_string(),
                 description: "Demonstrates argumentMode=join by expanding {items}.".to_string(),
-                template: "printf 'items:\\n%s\\n' {items}".to_string(),
+                template: join_items.to_string(),
                 argument_mode: Some("join".to_string()),
                 item_template: Some("{index}: {path}".to_string()),
-                item_separator: Some("\\n".to_string()),
+                item_separator: Some(join_separator.to_string()),
                 return_focus: Some(false),
             },
         ],
@@ -842,8 +895,7 @@ pub(crate) fn save_external_commands_to_path(
     }
     let content = serde_json::to_string_pretty(commands)
         .map_err(|error| format!("Serialize external commands failed: {error}"))?;
-    fs::write(path, content)
-        .map_err(|error| format_io_error("write external commands", path, error))
+    write_file_atomically(path, content.as_bytes(), "write external commands")
 }
 
 fn validate_external_commands(commands: &ExternalCommandsFile) -> Result<(), String> {
@@ -898,7 +950,7 @@ pub(crate) fn save_app_settings_to_path(path: &Path, settings: &AppSettings) -> 
     }
     let content = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("Serialize settings failed: {error}"))?;
-    fs::write(path, content).map_err(|error| format_io_error("write settings", path, error))
+    write_file_atomically(path, content.as_bytes(), "write settings")
 }
 
 pub(crate) fn load_app_settings_from_dir(config_root: &Path) -> Result<AppSettings, String> {
@@ -936,6 +988,7 @@ pub(crate) fn save_app_settings_to_dir(
     save_operation_settings_to_path(
         &settings_dir.join("operation.json"),
         &OperationSettings {
+            schema_version: default_settings_schema_version(),
             use_trash: settings.use_trash,
             operation_result: settings.operation_result.clone(),
             operation_cancel: settings.operation_cancel.clone(),
@@ -945,6 +998,7 @@ pub(crate) fn save_app_settings_to_dir(
     save_sftp_settings_to_path(
         &settings_dir.join("sftp.json"),
         &SftpSettings {
+            schema_version: default_settings_schema_version(),
             sftp_session: settings.sftp_session.clone(),
             sftp_transfer: settings.sftp_transfer.clone(),
         },
@@ -1056,6 +1110,7 @@ where
 
     let content = fs::read_to_string(path)
         .map_err(|error| format_io_error(&format!("read {label}"), path, error))?;
+    validate_supported_settings_schema(&content, label)?;
     let settings: T =
         serde_json::from_str(&content).map_err(|error| format!("Parse {label} failed: {error}"))?;
     let normalized = serde_json::to_string_pretty(&settings)
@@ -1077,8 +1132,28 @@ where
     }
     let content = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("Serialize {label} failed: {error}"))?;
-    fs::write(path, content)
-        .map_err(|error| format_io_error(&format!("write {label}"), path, error))
+    write_file_atomically(path, content.as_bytes(), &format!("write {label}"))
+}
+
+fn validate_supported_settings_schema(content: &str, label: &str) -> Result<(), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(content).map_err(|error| format!("Parse {label} failed: {error}"))?;
+    let Some(schema_version) = value.get("schemaVersion") else {
+        return Ok(());
+    };
+    let Some(schema_version) = schema_version.as_u64() else {
+        return Err(format!("{label} schemaVersion must be a positive integer."));
+    };
+    let supported = u64::from(default_settings_schema_version());
+    if schema_version > supported {
+        return Err(format!(
+            "{label} schemaVersion {schema_version} is newer than supported version {supported}."
+        ));
+    }
+    if schema_version == 0 {
+        return Err(format!("{label} schemaVersion must be at least 1."));
+    }
+    Ok(())
 }
 
 pub(crate) fn save_operation_failure_log_to_path(
@@ -1112,6 +1187,7 @@ pub(crate) fn save_operation_failure_log_to_path(
     }
     content.push('\n');
 
+    rotate_operation_failure_log_if_needed(path, content.len() as u64)?;
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1120,6 +1196,25 @@ pub(crate) fn save_operation_failure_log_to_path(
     file.write_all(content.as_bytes())
         .map_err(|error| format_io_error("write operation log", path, error))?;
     Ok(path_to_string(path))
+}
+
+fn rotate_operation_failure_log_if_needed(path: &Path, incoming_bytes: u64) -> Result<(), String> {
+    let current_bytes = match fs::metadata(path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format_io_error("read operation log metadata", path, error)),
+    };
+    if current_bytes.saturating_add(incoming_bytes) <= OPERATION_FAILURE_LOG_MAX_BYTES {
+        return Ok(());
+    }
+
+    let rotated_path = PathBuf::from(format!("{}.1", path.display()));
+    if rotated_path.exists() {
+        fs::remove_file(&rotated_path)
+            .map_err(|error| format_io_error("remove old operation log", &rotated_path, error))?;
+    }
+    fs::rename(path, &rotated_path)
+        .map_err(|error| format_io_error("rotate operation log", path, error))
 }
 
 fn format_io_error(action: &str, path: &Path, error: std::io::Error) -> String {
@@ -1135,6 +1230,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    const ENGLISH_LANGUAGE_JSON: &str = include_str!("../../docs/examples/language.en.json");
     const JAPANESE_LANGUAGE_JSON: &str = include_str!("../../docs/examples/language.ja.json");
     const QUENYA_LATIN_LANGUAGE_JSON: &str =
         include_str!("../../docs/examples/language.qya-Latn.json");
@@ -1153,7 +1249,112 @@ mod tests {
     }
 
     #[test]
+    fn future_settings_schema_is_rejected_without_rewriting_the_file() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("appearance.json");
+        let content = r#"{"schemaVersion":2}"#;
+        fs::write(&path, content).expect("write future appearance settings");
+
+        let error = load_appearance_settings_from_path(&path)
+            .err()
+            .expect("future schema must be rejected");
+
+        assert!(error.contains("newer than supported"));
+        assert_eq!(
+            fs::read_to_string(&path).expect("read preserved settings"),
+            content
+        );
+    }
+
+    #[test]
+    fn unknown_settings_field_is_rejected_without_rewriting_the_file() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("appearance.json");
+        let content = r#"{"schemaVersion":1,"unexpected":true}"#;
+        fs::write(&path, content).expect("write appearance settings");
+
+        let error = load_appearance_settings_from_path(&path)
+            .err()
+            .expect("unknown field must be rejected");
+
+        assert!(error.contains("unknown field"));
+        assert_eq!(
+            fs::read_to_string(&path).expect("read preserved settings"),
+            content
+        );
+    }
+
+    #[test]
+    fn settings_save_replaces_an_existing_file() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("appearance.json");
+        let mut settings = AppearanceSettings::default();
+        save_appearance_settings_to_path(&path, &settings).expect("save default settings");
+
+        settings.fonts.ui_size = 19;
+        save_appearance_settings_to_path(&path, &settings).expect("replace settings");
+        let loaded =
+            load_appearance_settings_from_path(&path).expect("load replaced appearance settings");
+
+        assert_eq!(loaded.fonts.ui_size, 19);
+    }
+
+    #[test]
+    fn split_operation_and_sftp_settings_include_schema_version() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let operation_path = directory.path().join("operation.json");
+        let sftp_path = directory.path().join("sftp.json");
+
+        save_operation_settings_to_path(&operation_path, &OperationSettings::default())
+            .expect("save operation settings");
+        save_sftp_settings_to_path(&sftp_path, &SftpSettings::default())
+            .expect("save SFTP settings");
+
+        for path in [operation_path, sftp_path] {
+            let value: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(path).expect("read split settings"))
+                    .expect("parse split settings");
+            assert_eq!(value["schemaVersion"], 1);
+        }
+    }
+
+    #[test]
+    fn operation_failure_log_rotates_at_the_size_limit() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("operation-failures.log");
+        fs::write(&path, vec![b'x'; OPERATION_FAILURE_LOG_MAX_BYTES as usize])
+            .expect("write full operation log");
+        let failed = vec![FileOperationResultItem {
+            path: "/tmp/example.txt".to_string(),
+            message: "denied".to_string(),
+        }];
+
+        save_operation_failure_log_to_path(&path, "Copy", &failed)
+            .expect("rotate and append operation log");
+
+        assert!(PathBuf::from(format!("{}.1", path.display())).is_file());
+        assert!(fs::read_to_string(&path)
+            .expect("read new operation log")
+            .contains("Copy: 1 failed"));
+    }
+
+    #[test]
+    fn default_external_commands_match_the_terminal_shell() {
+        let powershell = default_external_commands_for_shell("powershell");
+        let cmd = default_external_commands_for_shell("cmd");
+        let posix = default_external_commands_for_shell("posix");
+
+        assert!(powershell.commands[0].template.starts_with("Write-Output"));
+        assert_eq!(cmd.commands[1].template, "dir {args}");
+        assert_eq!(posix.commands[7].template, "wc -l {args}");
+        assert!(default_external_commands_for_shell("custom")
+            .commands
+            .is_empty());
+    }
+
+    #[test]
     fn language_presets_are_compatible_with_default_messages() {
+        assert_language_preset_compatibility("English", "en", ENGLISH_LANGUAGE_JSON);
         assert_language_preset_compatibility("Japanese", "ja", JAPANESE_LANGUAGE_JSON);
         assert_language_preset_compatibility(
             "Quenya Latin",

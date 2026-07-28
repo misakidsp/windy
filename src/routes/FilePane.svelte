@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Translate } from "./localization";
   import type { FileEntry, PaneId, PaneState, VirtualEntryWindow } from "./types";
 
   type ListAction = (node: HTMLElement, paneId: PaneId) => {
@@ -27,6 +28,11 @@
   export let entryNameStyle: (pane: PaneState, entry: FileEntry) => string | null;
   export let formatSize: (entry: FileEntry) => string;
   export let formatDate: (seconds: number | null) => string;
+  export let t: Translate = (id, values = {}) => (
+    id === "pane.quickFilterAria" || id === "pane.entriesAria"
+      ? `${values.title ?? ""} ${id === "pane.quickFilterAria" ? "quick filter" : "entries"}`.trim()
+      : id
+  );
 </script>
 
 <section class:active class="file-pane" aria-label={pane.title} style={`--file-row-height: ${rowHeight}px`}>
@@ -38,35 +44,35 @@
   </header>
   <div class:filter-active={Boolean(pane.quickFilterQuery)} class:filter-editing={pane.quickFilterInputActive} class="pane-divider">
     {#if pane.quickFilterInputActive}
-      <span class="filter-label">filter:</span>
+      <span class="filter-label">{t("pane.quickFilterLabel")}</span>
       <input
         use:registerFilterInput={pane.id}
         class="filter-input"
         value={pane.quickFilterQuery}
         spellcheck="false"
-        aria-label={`${pane.title} quick filter`}
+        aria-label={t("pane.quickFilterAria", { title: pane.title })}
         oninput={(event) => onQuickFilterInput(pane.id, event.currentTarget.value)}
         onkeydown={(event) => onQuickFilterKeydown(event, pane.id)}
       />
     {:else}
-      <span>{pane.quickFilterQuery ? `filter: ${pane.quickFilterQuery}` : showParentEntry ? ".. enabled" : "filter ready"}</span>
+      <span>{pane.quickFilterQuery ? t("pane.quickFilterValue", { query: pane.quickFilterQuery }) : showParentEntry ? t("pane.parentEntryEnabled") : t("pane.filterReady")}</span>
     {/if}
   </div>
   <div
     use:registerList={pane.id}
     class="file-list"
     role="listbox"
-    aria-label={`${pane.title} entries`}
+    aria-label={t("pane.entriesAria", { title: pane.title })}
     onscroll={() => onListScroll(pane.id)}
   >
     {#if pane.loading}
-      <div class="message-row">Loading...</div>
+      <div class="message-row">{t("pane.loading")}</div>
     {:else if pane.error}
       <div class="message-row error">{pane.error}</div>
     {:else if pane.entries.length === 0}
-      <div class="message-row">No entries</div>
+      <div class="message-row">{t("pane.noEntries")}</div>
     {:else if visibleEntries.length === 0}
-      <div class="message-row">No filter matches</div>
+      <div class="message-row">{t("pane.noFilterMatches")}</div>
     {:else}
       <div class="virtual-spacer" style={`height: ${virtualWindow.topPadding}px`}></div>
       {#each virtualWindow.entries as entry, virtualIndex (entry.key)}

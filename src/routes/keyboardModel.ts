@@ -130,6 +130,11 @@ const prefixActions: Record<string, PrefixKeyAction> = {
   "clipboard.copyNames": { type: "copySelectedNames" },
 };
 
+export const paneKeybindingCommandIds = [
+  ...Object.keys(commandActions),
+  ...Object.keys(prefixActions),
+];
+
 const implicitPrefixBindings: Record<string, string[]> = {};
 
 function allBindings(settings: KeybindSettings): Record<string, string[]> {

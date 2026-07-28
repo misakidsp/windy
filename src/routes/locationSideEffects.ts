@@ -1,6 +1,7 @@
 import { localFavoriteNameFromPath } from "./locationManagerModel";
 import { searchProfileNameFromSource } from "./searchModel";
 import { invokeCommand, invokeErrorMessage, type TauriInvoke } from "./tauriInvoke";
+import type { Translate } from "./localization";
 import type {
   ActiveSftpSession,
   LocalFavoriteProfile,
@@ -46,19 +47,19 @@ export function saveSftpConnectionProfile(
   });
 }
 
-export function saveLocalFavoriteProfile(invoke: TauriInvoke, path: string): Promise<LocalFavoriteProfile> {
+export function saveLocalFavoriteProfile(invoke: TauriInvoke, path: string, t?: Translate): Promise<LocalFavoriteProfile> {
   return invokeCommand<LocalFavoriteProfile>(invoke, "save_local_favorite_profile", {
     request: {
       id: null,
-      name: localFavoriteNameFromPath(path),
+      name: localFavoriteNameFromPath(path, t),
       path,
     },
   });
 }
 
-export function saveSearchProfile(invoke: TauriInvoke, source: SearchPaneSource): Promise<SearchProfile> {
+export function saveSearchProfile(invoke: TauriInvoke, source: SearchPaneSource, t?: Translate): Promise<SearchProfile> {
   return invokeCommand<SearchProfile>(invoke, "save_search_profile", {
-    request: searchProfileSaveRequestFromSource(source),
+    request: searchProfileSaveRequestFromSource(source, t),
   });
 }
 
@@ -126,10 +127,10 @@ export function sftpProfileSaveRequestFromForm(form: SftpConnectionForm) {
   };
 }
 
-export function searchProfileSaveRequestFromSource(source: SearchPaneSource) {
+export function searchProfileSaveRequestFromSource(source: SearchPaneSource, t?: Translate) {
   return {
     id: null,
-    name: searchProfileNameFromSource(source),
+    name: searchProfileNameFromSource(source, t),
     rootPath: source.rootPath,
     nameRegex: source.nameRegex,
     recursive: source.recursive,

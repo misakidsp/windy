@@ -1,4 +1,4 @@
-use crate::path_utils::{format_io_error, path_to_string};
+use crate::path_utils::{format_io_error, path_to_string, write_file_atomically};
 use crate::search::{
     normalized_search_hidden_mode, normalized_search_kind, normalized_search_readonly_mode,
 };
@@ -16,7 +16,7 @@ use std::{
 static LOCATION_PROFILE_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LocalFavoriteProfile {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -24,7 +24,7 @@ pub(crate) struct LocalFavoriteProfile {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SearchProfile {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -95,7 +95,7 @@ pub(crate) struct SaveSftpConnectionProfileRequest {
 }
 
 #[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LocationProfilesFile {
     #[serde(default)]
     pub(crate) local_favorites: Vec<LocalFavoriteProfile>,
@@ -428,6 +428,5 @@ pub(crate) fn save_location_profiles_to_path(
     }
     let content = serde_json::to_string_pretty(profiles)
         .map_err(|error| format!("Serialize location profiles failed: {error}"))?;
-    fs::write(path, content)
-        .map_err(|error| format_io_error("write location profiles", path, error))
+    write_file_atomically(path, content.as_bytes(), "write location profiles")
 }

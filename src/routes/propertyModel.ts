@@ -1,4 +1,7 @@
+import { translateMessage, type Translate } from "./localization";
 import type { EntryKind, FileEntry, PaneId, PaneSourceKind, PaneState } from "./types";
+
+const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
 
 export type FilePropertyItem = {
   key: string;
@@ -75,6 +78,14 @@ export function formatPropertyMode(mode: number | null): string {
   return (mode & 0o777).toString(8).padStart(3, "0");
 }
 
-export function formatPropertyBoolean(value: boolean): string {
-  return value ? "yes" : "no";
+export function formatPropertyBoolean(value: boolean, t: Translate = fallbackTranslate): string {
+  return value ? t("common.yes") : t("common.no");
+}
+
+export function formatPropertyEntryKind(kind: EntryKind, t: Translate = fallbackTranslate): string {
+  return t(`properties.kind.${kind}`);
+}
+
+export function formatPropertySourceKind(kind: PaneSourceKind, t: Translate = fallbackTranslate): string {
+  return t(`properties.sourceKind.${kind}`);
 }

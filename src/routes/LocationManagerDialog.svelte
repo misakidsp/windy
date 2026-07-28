@@ -9,6 +9,7 @@
     SftpConnectionProfile,
     SftpConnectionTestResult,
   } from "./types";
+  import type { Translate } from "./localization";
 
   export let mode: LocationDialogMode;
   export let locationProfilesLoading = false;
@@ -30,23 +31,29 @@
   export let onAuthKindChange: (authKind: SftpConnectionForm["authKind"]) => void;
   export let onCompositionStart: () => void;
   export let onCompositionEnd: () => void;
+  export let t: Translate = (id, values) => {
+    if (!values) return id;
+    return id.replace(/\{([a-zA-Z0-9_.-]+)\}/g, (match, key) => (
+      values[key] === undefined ? match : String(values[key])
+    ));
+  };
 
-  $: dialogTitle = mode === "manager" ? "Location Manager" : sftpForm.profileId ? "SFTP Profile" : "New SFTP Connection";
-  $: dialogKind = mode === "manager" ? "source" : sftpForm.profileId ? "saved" : "temporary";
+  $: dialogTitle = mode === "manager" ? t("location.title") : sftpForm.profileId ? t("location.sftpProfile") : t("location.newSftpConnection");
+  $: dialogKind = mode === "manager" ? t("location.kind.source") : sftpForm.profileId ? t("location.kind.saved") : t("location.kind.temporary");
   $: dialogMessage =
     mode === "manager"
-      ? "Choose a location source for the active pane."
-      : "Test an SFTP connection or save profile changes. Passwords are not saved.";
+      ? t("location.managerMessage")
+      : t("location.sftpMessage");
   $: primaryShortcut =
     mode === "manager"
       ? locationProfilesLoading
-        ? "Loading..."
-        : "Choose: Enter"
+        ? t("location.loading")
+        : t("location.chooseEnter")
       : sftpConnecting
-        ? "Connecting..."
+        ? t("location.connecting")
         : pendingKnownHost
-          ? "Trust host key: Enter"
-          : "Connect: Enter";
+          ? t("location.trustHostKeyEnter")
+          : t("location.connectEnter");
 </script>
 
 <div class="dialog-backdrop" role="presentation">
@@ -66,33 +73,33 @@
     </div>
 
     {#if mode === "manager"}
-      {#if locationProfilesError}
-        <div class="operation-result confirm-result">
-          <div class="result-failed">-: {locationProfilesError}</div>
-        </div>
-      {/if}
+    {#if locationProfilesError}
+      <div class="operation-result confirm-result">
+        <div class="result-failed">{t("common.error")}: {locationProfilesError}</div>
+      </div>
+    {/if}
       {#if pendingDeleteProfile}
         <div class="operation-result confirm-result">
           <div class="result-failed">
-            Delete SFTP profile "{pendingDeleteProfile.name}"? Press D or Enter to confirm, Esc to cancel.
+            {t("location.deleteSftpProfileConfirm", { name: pendingDeleteProfile.name })}
           </div>
         </div>
       {/if}
       {#if pendingDeleteLocalFavorite}
         <div class="operation-result confirm-result">
           <div class="result-failed">
-            Delete local favorite "{pendingDeleteLocalFavorite.name}"? Press D or Enter to confirm, Esc to cancel.
+            {t("location.deleteLocalFavoriteConfirm", { name: pendingDeleteLocalFavorite.name })}
           </div>
         </div>
       {/if}
       {#if pendingDeleteSearchProfile}
         <div class="operation-result confirm-result">
           <div class="result-failed">
-            Delete search profile "{pendingDeleteSearchProfile.name}"? Press D or Enter to confirm, Esc to cancel.
+            {t("location.deleteSearchProfileConfirm", { name: pendingDeleteSearchProfile.name })}
           </div>
         </div>
       {/if}
-      <div class="location-options" role="listbox" aria-label="Location sources">
+      <div class="location-options" role="listbox" aria-label={t("location.sources")}>
         {#each locationOptions as option, index (optionKey(option))}
           <div
             class:cursor={locationCursorIndex === index}
@@ -112,7 +119,7 @@
         oncompositionend={onCompositionEnd}
       >
         <label>
-          <span>name</span>
+          <span>{t("location.field.name")}</span>
           <input
             value={sftpForm.name}
             spellcheck="false"
@@ -121,7 +128,7 @@
           />
         </label>
         <label>
-          <span>host</span>
+          <span>{t("location.field.host")}</span>
           <input
             bind:this={hostInputElement}
             value={sftpForm.host}
@@ -131,7 +138,7 @@
           />
         </label>
         <label>
-          <span>port</span>
+          <span>{t("location.field.port")}</span>
           <input
             value={sftpForm.port}
             inputmode="numeric"
@@ -141,7 +148,7 @@
           />
         </label>
         <label>
-          <span>user</span>
+          <span>{t("location.field.user")}</span>
           <input
             value={sftpForm.username}
             spellcheck="false"
@@ -150,18 +157,18 @@
           />
         </label>
         <label>
-          <span>auth</span>
+          <span>{t("location.field.auth")}</span>
           <select
             value={sftpForm.authKind}
             onchange={(event) => onAuthKindChange(event.currentTarget.value as SftpConnectionForm["authKind"])}
           >
-            <option value="password">password</option>
-            <option value="privateKey">private key</option>
+            <option value="password">{t("location.auth.password")}</option>
+            <option value="privateKey">{t("location.auth.privateKey")}</option>
           </select>
         </label>
         {#if sftpForm.authKind === "password"}
           <label>
-            <span>password</span>
+            <span>{t("location.field.password")}</span>
             <input
               bind:this={passwordInputElement}
               value={sftpForm.password}
@@ -172,7 +179,7 @@
           </label>
         {:else}
           <label>
-            <span>key path</span>
+            <span>{t("location.field.keyPath")}</span>
             <input
               value={sftpForm.privateKeyPath}
               spellcheck="false"
@@ -181,7 +188,7 @@
             />
           </label>
           <label>
-            <span>passphrase</span>
+            <span>{t("location.field.passphrase")}</span>
             <input
               bind:this={passwordInputElement}
               value={sftpForm.passphrase}
@@ -192,7 +199,7 @@
           </label>
         {/if}
         <label>
-          <span>remote path</span>
+          <span>{t("location.field.remotePath")}</span>
           <input
             value={sftpForm.remotePath}
             spellcheck="false"
@@ -201,47 +208,47 @@
           />
         </label>
         <label class="sftp-save-profile">
-          <span>save</span>
+          <span>{t("location.field.save")}</span>
           <input
             checked={sftpForm.saveProfile}
             type="checkbox"
             onchange={(event) => onSftpFormPatch({ saveProfile: event.currentTarget.checked })}
           />
-          <span>store this profile without password</span>
+          <span>{t("location.storeProfileWithoutPassword")}</span>
         </label>
       </div>
       {#if sftpConnectionResult}
         <div class="operation-result confirm-result">
           <div class="result-summary">
-            {sftpConnectionResult.displayName} connected as {sftpConnectionResult.connectionId}
+            {t("location.connectedAs", { name: sftpConnectionResult.displayName, connectionId: sftpConnectionResult.connectionId })}
           </div>
-          <div>remote path: {sftpConnectionResult.remotePath}</div>
+          <div>{t("location.field.remotePath")}: {sftpConnectionResult.remotePath}</div>
         </div>
       {/if}
       {#if pendingKnownHost}
         <div class="operation-result confirm-result">
-          <div class="result-summary">unknown host key</div>
+          <div class="result-summary">{t("location.unknownHostKey")}</div>
           <div>{pendingKnownHost.host}:{pendingKnownHost.port}</div>
           <div>{pendingKnownHost.fingerprint}</div>
           <div>{pendingKnownHost.knownHostsPath}</div>
         </div>
       {/if}
-      {#if sftpConnectionError}
-        <div class="operation-result confirm-result">
-          <div class="result-failed">-: {sftpConnectionError}</div>
-        </div>
-      {/if}
+    {#if sftpConnectionError}
+      <div class="operation-result confirm-result">
+          <div class="result-failed">{t("common.error")}: {sftpConnectionError}</div>
+      </div>
+    {/if}
     {/if}
     <div class="confirm-shortcuts">
       <span>{primaryShortcut}</span>
-      <span>{mode === "manager" ? "Move: Up/Down" : "Back: Esc"}</span>
+      <span>{mode === "manager" ? t("shortcut.moveUpDown") : t("shortcut.backEsc")}</span>
       {#if mode === "manager"}
-        <span>Add current: A</span>
-        <span>Delete saved: D</span>
-        <span>Disconnect session: Q</span>
-        <span>Close: Esc</span>
+        <span>{t("location.addCurrentA")}</span>
+        <span>{t("location.deleteSavedD")}</span>
+        <span>{t("location.disconnectSessionQ")}</span>
+        <span>{t("shortcut.closeEsc")}</span>
       {:else}
-        <span>Save profile: ctrl+s</span>
+        <span>{t("location.saveProfileCtrlS")}</span>
       {/if}
     </div>
   </div>

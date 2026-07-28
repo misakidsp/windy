@@ -41,6 +41,11 @@ struct TerminalSession {
 static TERMINAL_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[tauri::command]
+pub(crate) fn get_terminal_shell_kind() -> String {
+    terminal_shell_kind().to_string()
+}
+
+#[tauri::command]
 pub(crate) fn start_terminal(
     app: AppHandle,
     state: State<'_, TerminalState>,
@@ -291,6 +296,38 @@ fn terminal_shell_command() -> CommandBuilder {
 }
 
 #[cfg(target_os = "windows")]
+pub(crate) fn terminal_shell_kind() -> &'static str {
+    if let Ok(shell) = std::env::var("WINDY_TERMINAL_SHELL") {
+        let shell = shell.trim();
+        if !shell.is_empty() {
+            return windows_terminal_shell_kind(shell);
+        }
+    }
+
+    if windows_command_available("pwsh") || windows_command_available("powershell") {
+        "powershell"
+    } else {
+        "cmd"
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_terminal_shell_kind(shell: &str) -> &'static str {
+    let shell_name = std::path::Path::new(shell)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+
+    match shell_name.as_str() {
+        "pwsh" | "powershell" => "powershell",
+        "cmd" => "cmd",
+        "wsl" => "posix",
+        _ => "unknown",
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn windows_terminal_shell_command(shell: &str) -> CommandBuilder {
     let shell_name = std::path::Path::new(shell)
         .file_stem()
@@ -351,6 +388,11 @@ fn terminal_shell_command() -> CommandBuilder {
     let mut command = CommandBuilder::new(shell);
     command.args(["-l", "-i"]);
     command
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn terminal_shell_kind() -> &'static str {
+    "posix"
 }
 
 #[cfg(not(target_os = "windows"))]

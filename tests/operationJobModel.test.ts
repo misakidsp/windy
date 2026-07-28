@@ -7,9 +7,11 @@ import {
   focusedOperationEntries,
   operationBlockingMessages,
   operationConflictMessages,
+  operationCommandIds,
   operationSupportedForPaneSources,
   selectedOperationEntries,
 } from "../src/routes/operationJobModel";
+import { defaultKeybindSettings } from "../src/routes/keyboardModel";
 import type { FileEntry, PaneState } from "../src/routes/types";
 
 function entry(partial: Partial<FileEntry> & Pick<FileEntry, "name" | "path">): FileEntry {
@@ -75,7 +77,7 @@ const copyJob = createFileOperationJob({
 });
 
 assert.equal(copyJob.id, "job-test");
-assert.equal(copyJob.commandId, "file.copyToOtherPane");
+assert.equal(copyJob.commandId, "file.copy");
 assert.equal(copyJob.risk, "safe");
 assert.equal(copyJob.sourcePath, "/src");
 assert.equal(copyJob.destinationPath, "/dest");
@@ -97,6 +99,26 @@ assert.deepEqual(failedOperationEntries(copyJob, { succeeded: [], failed: [{ pat
 ]);
 assert.deepEqual(operationConflictMessages(copyJob, right.entries), ["a.txt already exists in /dest."]);
 assert.match(executionConfirmationMessage(copyJob, right.entries), /1 conflict\(s\) will be skipped/);
+
+for (const kind of [
+  "copy",
+  "move",
+  "rename",
+  "chmod",
+  "windowsAttributes",
+  "trash",
+  "delete",
+  "mkdir",
+  "createFile",
+  "refresh",
+  "extractArchive",
+  "createArchive",
+] as const) {
+  assert.ok(
+    defaultKeybindSettings.bindings[operationCommandIds[kind]],
+    `${kind} operation command id must exist in keybinding defaults`,
+  );
+}
 
 const renameJob = createFileOperationJob({
   kind: "rename",
@@ -131,7 +153,7 @@ const windowsAttributeJob = createFileOperationJob({
   windowsAttributesMode: true,
 });
 assert.equal(windowsAttributeJob.kind, "windowsAttributes");
-assert.equal(windowsAttributeJob.commandId, "file.changeWindowsAttributes");
+assert.equal(windowsAttributeJob.commandId, "file.chmod");
 assert.equal(windowsAttributeJob.requestedName, "readonly=off hidden=on");
 
 const multiWindowsAttributeJob = createFileOperationJob({

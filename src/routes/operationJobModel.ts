@@ -8,6 +8,7 @@ import type {
   PaneId,
   PaneState,
 } from "./types";
+import { translateMessage, type Translate } from "./localization";
 import { operationSupportedByCapabilities } from "./sourceCapabilityModel";
 
 export type CreateFileOperationJobInput = {
@@ -20,40 +21,24 @@ export type CreateFileOperationJobInput = {
   windowsAttributesMode?: boolean;
   now?: Date;
   id?: string;
+  t?: Translate;
 };
 
-const commandIds: Record<FileOperationKind, string> = {
-  copy: "file.copyToOtherPane",
-  move: "file.moveToOtherPane",
-  rename: "file.renameFocused",
-  chmod: "file.changePermissions",
-  windowsAttributes: "file.changeWindowsAttributes",
-  trash: "file.deleteSelected",
-  delete: "file.deleteSelectedPermanently",
-  mkdir: "file.createDirectory",
+export const operationCommandIds: Record<FileOperationKind, string> = {
+  copy: "file.copy",
+  move: "file.move",
+  rename: "file.rename",
+  chmod: "file.chmod",
+  windowsAttributes: "file.chmod",
+  trash: "file.delete",
+  delete: "file.deletePermanently",
+  mkdir: "file.mkdir",
   createFile: "file.createFile",
   removeEmptyDirectory: "undo.removeEmptyDirectory",
   removeEmptyFile: "undo.removeEmptyFile",
   refresh: "app.refresh",
-  extractArchive: "archive.extractSelected",
+  extractArchive: "archive.unpack",
   createArchive: "archive.create",
-};
-
-const labels: Record<FileOperationKind, string> = {
-  copy: "Copy to other pane",
-  move: "Move to other pane",
-  rename: "Rename focused entry",
-  chmod: "Change permissions",
-  windowsAttributes: "Change Windows attributes",
-  trash: "Move selected entries to Trash",
-  delete: "Delete selected entries permanently",
-  mkdir: "Create directory",
-  createFile: "Create file",
-  removeEmptyDirectory: "Undo create directory",
-  removeEmptyFile: "Undo create file",
-  refresh: "Refresh active pane",
-  extractArchive: "Extract archives to other pane",
-  createArchive: "Create archive",
 };
 
 const risks: Record<FileOperationKind, JobRisk> = {
@@ -73,6 +58,12 @@ const risks: Record<FileOperationKind, JobRisk> = {
   createArchive: "safe",
 };
 
+const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
+
+function operationLabel(kind: FileOperationKind, t: Translate): string {
+  return t(`operation.label.${kind}`);
+}
+
 export function createFileOperationJob({
   kind,
   sourcePaneId,
@@ -83,6 +74,7 @@ export function createFileOperationJob({
   windowsAttributesMode = false,
   now = new Date(),
   id = `job-${Date.now().toString(36)}`,
+  t = fallbackTranslate,
 }: CreateFileOperationJobInput): FileOperationJob {
   const destinationPath = destinationPane ? paneOperationPath(destinationPane) : paneOperationPath(sourcePane);
   const resolvedKind: FileOperationKind = kind === "chmod" && windowsAttributesMode ? "windowsAttributes" : kind;
@@ -92,8 +84,8 @@ export function createFileOperationJob({
   return {
     id,
     kind: resolvedKind,
-    commandId: commandIds[resolvedKind],
-    label: labels[resolvedKind],
+    commandId: operationCommandIds[resolvedKind],
+    label: operationLabel(resolvedKind, t),
     status: "preview",
     risk: risks[resolvedKind],
     sourcePaneId,
@@ -101,8 +93,8 @@ export function createFileOperationJob({
     sourcePath,
     destinationPath,
     targets,
-    plannedActions: plannedActionsFor(resolvedKind, targets, sourcePath, destinationPath),
-    confirmationMessage: confirmationMessageFor(resolvedKind, targets, sourcePath, destinationPath),
+    plannedActions: plannedActionsFor(resolvedKind, targets, sourcePath, destinationPath, t),
+    confirmationMessage: confirmationMessageFor(resolvedKind, targets, sourcePath, destinationPath, t),
     requestedName: defaultRequestedNameFor(resolvedKind, targets),
     executable: isExecutableJob(resolvedKind, targets, destinationPath),
     createdAt: now.toISOString(),
@@ -225,24 +217,27 @@ export function plannedActionsFor(
   targets: FileOperationTarget[],
   sourcePath: string,
   destinationPath: string | null,
+  t: Translate = fallbackTranslate,
 ): string[] {
-  if (kind === "mkdir") return [`Create a new directory under ${sourcePath || "(no source path)"}.`];
-  if (kind === "createFile") return [`Create a new empty file under ${sourcePath || "(no source path)"}.`];
-  if (kind === "removeEmptyDirectory") return targets.map((target) => `Remove empty directory ${target.path}.`);
-  if (kind === "removeEmptyFile") return targets.map((target) => `Remove empty file ${target.path}.`);
-  if (kind === "refresh") return [`Reload directory listing for ${sourcePath || "(no source path)"}.`];
-  if (targets.length === 0) return ["No target entries were resolved."];
-  if (kind === "copy") return targets.map((target) => `Copy ${target.path} to ${destinationPath || "(no destination)"}.`);
-  if (kind === "move") return targets.map((target) => `Move ${target.path} to ${destinationPath || "(no destination)"}.`);
+  const source = sourcePath || t("operation.path.noSource");
+  const destination = destinationPath || t("operation.path.noDestination");
+  if (kind === "mkdir") return [t("operation.planned.mkdir", { source })];
+  if (kind === "createFile") return [t("operation.planned.createFile", { source })];
+  if (kind === "removeEmptyDirectory") return targets.map((target) => t("operation.planned.removeEmptyDirectory", { path: target.path }));
+  if (kind === "removeEmptyFile") return targets.map((target) => t("operation.planned.removeEmptyFile", { path: target.path }));
+  if (kind === "refresh") return [t("operation.planned.refresh", { source })];
+  if (targets.length === 0) return [t("operation.planned.noTargets")];
+  if (kind === "copy") return targets.map((target) => t("operation.planned.copy", { path: target.path, destination }));
+  if (kind === "move") return targets.map((target) => t("operation.planned.move", { path: target.path, destination }));
   if (kind === "extractArchive") {
-    return targets.map((target) => `Extract ${target.path} under ${destinationPath || "(no destination)"}.`);
+    return targets.map((target) => t("operation.planned.extractArchive", { path: target.path, destination }));
   }
-  if (kind === "createArchive") return [`Create archive under ${destinationPath || "(no destination)"} from ${targets.length} item(s).`];
-  if (kind === "rename") return targets.map((target) => `Rename ${target.path}.`);
-  if (kind === "chmod") return targets.map((target) => `Change permissions for ${target.path}.`);
-  if (kind === "windowsAttributes") return targets.map((target) => `Change Windows attributes for ${target.path}.`);
-  if (kind === "trash") return targets.map((target) => `Move ${target.path} to Trash.`);
-  return targets.map((target) => `Delete ${target.path} permanently.`);
+  if (kind === "createArchive") return [t("operation.planned.createArchive", { destination, count: targets.length })];
+  if (kind === "rename") return targets.map((target) => t("operation.planned.rename", { path: target.path }));
+  if (kind === "chmod") return targets.map((target) => t("operation.planned.chmod", { path: target.path }));
+  if (kind === "windowsAttributes") return targets.map((target) => t("operation.planned.windowsAttributes", { path: target.path }));
+  if (kind === "trash") return targets.map((target) => t("operation.planned.trash", { path: target.path }));
+  return targets.map((target) => t("operation.planned.delete", { path: target.path }));
 }
 
 export function confirmationMessageFor(
@@ -250,24 +245,27 @@ export function confirmationMessageFor(
   targets: FileOperationTarget[],
   sourcePath: string,
   destinationPath: string | null,
+  t: Translate = fallbackTranslate,
 ): string {
-  if (kind === "mkdir") return `Create a new directory under ${sourcePath || "(no source path)"}?`;
-  if (kind === "createFile") return `Create a new empty file under ${sourcePath || "(no source path)"}?`;
-  if (kind === "removeEmptyDirectory") return `Undo directory creation by removing ${targets[0]?.path || "the empty directory"}?`;
-  if (kind === "removeEmptyFile") return `Undo file creation by removing ${targets[0]?.path || "the empty file"}?`;
-  if (kind === "refresh") return "Refresh is safe and does not mutate the file system.";
-  if (targets.length === 0) return "No targets are available; this job cannot execute.";
-  if (kind === "copy") return `Copy ${targets.length} item(s) to ${destinationPath || "(no destination)"}?`;
-  if (kind === "move") return `Move ${targets.length} item(s) to ${destinationPath || "(no destination)"}?`;
+  const source = sourcePath || t("operation.path.noSource");
+  const destination = destinationPath || t("operation.path.noDestination");
+  if (kind === "mkdir") return t("operation.confirm.mkdir", { source });
+  if (kind === "createFile") return t("operation.confirm.createFile", { source });
+  if (kind === "removeEmptyDirectory") return t("operation.confirm.removeEmptyDirectory", { path: targets[0]?.path || t("operation.path.emptyDirectory") });
+  if (kind === "removeEmptyFile") return t("operation.confirm.removeEmptyFile", { path: targets[0]?.path || t("operation.path.emptyFile") });
+  if (kind === "refresh") return t("operation.confirm.refresh");
+  if (targets.length === 0) return t("operation.confirm.noTargets");
+  if (kind === "copy") return t("operation.confirm.copy", { count: targets.length, destination });
+  if (kind === "move") return t("operation.confirm.move", { count: targets.length, destination });
   if (kind === "extractArchive") {
-    return `Extract ${targets.length} archive(s) to ${destinationPath || "(no destination)"}?`;
+    return t("operation.confirm.extractArchive", { count: targets.length, destination });
   }
-  if (kind === "createArchive") return `Create archive from ${targets.length} item(s) under ${destinationPath || "(no destination)"}?`;
-  if (kind === "rename") return `Rename ${targets[0]?.path || "the focused item"}?`;
-  if (kind === "chmod") return `Change permissions for ${targets.length} item(s)?`;
-  if (kind === "windowsAttributes") return `Change Windows attributes for ${targets.length} item(s)?`;
-  if (kind === "trash") return `Move ${targets.length} item(s) to Trash?`;
-  return `Permanently delete ${targets.length} item(s)? This bypasses Trash and cannot be undone from Windy.`;
+  if (kind === "createArchive") return t("operation.confirm.createArchive", { count: targets.length, destination });
+  if (kind === "rename") return t("operation.confirm.rename", { path: targets[0]?.path || t("operation.path.focusedItem") });
+  if (kind === "chmod") return t("operation.confirm.chmod", { count: targets.length });
+  if (kind === "windowsAttributes") return t("operation.confirm.windowsAttributes", { count: targets.length });
+  if (kind === "trash") return t("operation.confirm.trash", { count: targets.length });
+  return t("operation.confirm.delete", { count: targets.length });
 }
 
 export function operationSupportedForPaneSources(
@@ -286,22 +284,23 @@ export function operationDestinationPaneId(job: FileOperationJob): PaneId {
   return job.destinationPaneId ?? job.sourcePaneId;
 }
 
-export function operationConflictMessages(job: FileOperationJob, destinationEntries: FileEntry[]): string[] {
+export function operationConflictMessages(job: FileOperationJob, destinationEntries: FileEntry[], t: Translate = fallbackTranslate): string[] {
   if (job.kind === "refresh" || job.kind === "trash" || job.kind === "delete" || job.kind === "removeEmptyDirectory" || job.kind === "removeEmptyFile") return [];
 
   const destinationNames = new Set(destinationEntries.map((entry) => entry.name));
+  const destination = job.destinationPath || t("operation.path.noDestination");
 
   if (job.kind === "copy" || job.kind === "move") {
     return job.targets
       .filter((target) => destinationNames.has(target.name))
-      .map((target) => `${target.name} already exists in ${job.destinationPath || "(no destination)"}.`);
+      .map((target) => t("operation.conflict.exists", { name: target.name, destination }));
   }
 
   if (job.kind === "extractArchive") {
     return job.targets
       .map((target) => archiveExtractionDirectoryName(target.name))
       .filter((name) => destinationNames.has(name))
-      .map((name) => `${name} already exists in ${job.destinationPath || "(no destination)"}.`);
+      .map((name) => t("operation.conflict.exists", { name, destination }));
   }
 
   const requestedName = job.requestedName?.trim();
@@ -309,21 +308,21 @@ export function operationConflictMessages(job: FileOperationJob, destinationEntr
 
   if (job.kind === "rename") {
     const currentName = job.targets[0]?.name;
-    if (requestedName === currentName) return [`${requestedName} is the current name.`];
+    if (requestedName === currentName) return [t("operation.conflict.currentName", { name: requestedName })];
   }
 
   return destinationNames.has(requestedName)
-    ? [`${requestedName} already exists in ${job.destinationPath || job.sourcePath || "(no destination)"}.`]
+    ? [t("operation.conflict.exists", { name: requestedName, destination: job.destinationPath || job.sourcePath || t("operation.path.noDestination") })]
     : [];
 }
 
-export function operationBlockingMessages(job: FileOperationJob, destinationEntries: FileEntry[]): string[] {
-  if (job.kind === "copy" || job.kind === "move") return operationSelfReferenceMessages(job);
+export function operationBlockingMessages(job: FileOperationJob, destinationEntries: FileEntry[], t: Translate = fallbackTranslate): string[] {
+  if (job.kind === "copy" || job.kind === "move") return operationSelfReferenceMessages(job, t);
   if (job.kind === "createArchive" && !isSupportedCreatedArchiveName(job.requestedName ?? "")) {
-    return ["Archive name must end with .zip, .tar, .tar.gz, or .tgz."];
+    return [t("operation.blocking.archiveExtension")];
   }
   if (job.kind === "rename" || job.kind === "mkdir" || job.kind === "createFile" || job.kind === "extractArchive" || job.kind === "createArchive") {
-    return operationConflictMessages(job, destinationEntries);
+    return operationConflictMessages(job, destinationEntries, t);
   }
   return [];
 }
@@ -341,15 +340,12 @@ export function archiveExtractionDirectoryName(name: string): string {
   return index > 0 ? name.slice(0, index) : name;
 }
 
-export function operationSelfReferenceMessages(job: FileOperationJob): string[] {
+export function operationSelfReferenceMessages(job: FileOperationJob, t: Translate = fallbackTranslate): string[] {
   if ((job.kind !== "copy" && job.kind !== "move") || !job.destinationPath) return [];
 
   return job.targets
     .filter((target) => target.kind === "directory" && pathIsSameOrDescendant(job.destinationPath ?? "", target.path))
-    .map(
-      (target) =>
-        `Cannot ${job.kind} ${target.path} into itself or one of its descendants: ${job.destinationPath}.`,
-    );
+    .map((target) => t("operation.blocking.selfReference", { kind: job.kind, path: target.path, destination: job.destinationPath ?? "" }));
 }
 
 export function pathIsSameOrDescendant(path: string, ancestor: string): boolean {
@@ -366,25 +362,25 @@ function normalizeComparablePath(path: string, separator: string): string {
   return normalized.endsWith(separator) && normalized.length > 1 ? normalized.slice(0, -1) : normalized;
 }
 
-export function executionConfirmationMessage(job: FileOperationJob, destinationEntries: FileEntry[]): string {
-  const conflicts = operationConflictMessages(job, destinationEntries);
+export function executionConfirmationMessage(job: FileOperationJob, destinationEntries: FileEntry[], t: Translate = fallbackTranslate): string {
+  const conflicts = operationConflictMessages(job, destinationEntries, t);
   const conflictNote =
     conflicts.length > 0 && (job.kind === "copy" || job.kind === "move")
-      ? `\n\n${conflicts.length} conflict(s) will be skipped.`
+      ? t("operation.conflictSkipped", { count: conflicts.length })
       : "";
 
   return `${job.confirmationMessage}${conflictNote}`;
 }
 
-export function targetSummary(job: FileOperationJob): string {
-  if (job.kind === "mkdir") return "Creates one new directory.";
-  if (job.kind === "createFile") return "Creates one new empty file.";
-  if (job.kind === "createArchive") return `Creates one archive from ${job.targets.length} target${job.targets.length === 1 ? "" : "s"}.`;
-  if (job.kind === "removeEmptyDirectory") return "Removes one empty directory.";
-  if (job.kind === "removeEmptyFile") return "Removes one empty file.";
-  if (job.kind === "refresh") return "Refreshes the active pane listing.";
-  if (job.targets.length === 0) return "No target entries resolved.";
-  return `${job.targets.length} target${job.targets.length === 1 ? "" : "s"} resolved.`;
+export function targetSummary(job: FileOperationJob, t: Translate = fallbackTranslate): string {
+  if (job.kind === "mkdir") return t("operation.summary.mkdir");
+  if (job.kind === "createFile") return t("operation.summary.createFile");
+  if (job.kind === "createArchive") return t("operation.summary.createArchive", { count: job.targets.length });
+  if (job.kind === "removeEmptyDirectory") return t("operation.summary.removeEmptyDirectory");
+  if (job.kind === "removeEmptyFile") return t("operation.summary.removeEmptyFile");
+  if (job.kind === "refresh") return t("operation.summary.refresh");
+  if (job.targets.length === 0) return t("operation.summary.noTargets");
+  return t("operation.summary.targets", { count: job.targets.length });
 }
 
 export function operationTargetPreviewLimit(job: FileOperationJob): number {

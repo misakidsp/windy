@@ -36,7 +36,7 @@ function scrollTextViewerTo(viewer: TextViewerState, line: number, pageSize: num
 
 function enterTextViewerSearch(viewer: TextViewerState): ViewerActionResult {
   return {
-    viewer: { ...viewer, searchMode: true, searchQuery: "", searchMessage: "/" },
+    viewer: { ...viewer, searchMode: true, searchQuery: "", searchMessage: "/", searchMessageId: undefined, searchMessageValues: undefined },
     commandId: "viewer.searchPrompt",
   };
 }
@@ -44,21 +44,26 @@ function enterTextViewerSearch(viewer: TextViewerState): ViewerActionResult {
 function updateTextViewerSearch(viewer: TextViewerState, key: string): ViewerActionResult {
   if (key === "Backspace") {
     const nextQuery = viewer.searchQuery.slice(0, -1);
-    return { viewer: { ...viewer, searchQuery: nextQuery, searchMessage: `/${nextQuery}` } };
+    return { viewer: { ...viewer, searchQuery: nextQuery, searchMessage: `/${nextQuery}`, searchMessageId: undefined, searchMessageValues: undefined } };
   }
   if (key.length === 1) {
     const nextQuery = `${viewer.searchQuery}${key}`;
-    return { viewer: { ...viewer, searchQuery: nextQuery, searchMessage: `/${nextQuery}` } };
+    return { viewer: { ...viewer, searchQuery: nextQuery, searchMessage: `/${nextQuery}`, searchMessageId: undefined, searchMessageValues: undefined } };
   }
   return { viewer };
 }
 
 function findTextViewerMatch(viewer: TextViewerState, query: string, direction: 1 | -1): ViewerActionResult {
+  const notFoundMessage = {
+    searchMessage: "",
+    searchMessageId: "viewer.searchNotFound",
+    searchMessageValues: { query },
+  };
   const needle = query.toLowerCase();
   const lineCount = viewer.lines.length;
   if (lineCount === 0) {
     return {
-      viewer: { ...viewer, searchMode: false, searchMessage: `Pattern not found: ${query}` },
+      viewer: { ...viewer, searchMode: false, ...notFoundMessage },
       commandId: "viewer.searchNotFound",
     };
   }
@@ -75,7 +80,7 @@ function findTextViewerMatch(viewer: TextViewerState, query: string, direction: 
 
   if (match === null) {
     return {
-      viewer: { ...viewer, searchMode: false, searchMessage: `Pattern not found: ${query}` },
+      viewer: { ...viewer, searchMode: false, ...notFoundMessage },
       commandId: "viewer.searchNotFound",
     };
   }
@@ -86,7 +91,9 @@ function findTextViewerMatch(viewer: TextViewerState, query: string, direction: 
       topLine: match,
       searchMode: false,
       searchQuery: query,
-      searchMessage: `Found: ${query}`,
+      searchMessage: "",
+      searchMessageId: "viewer.searchFound",
+      searchMessageValues: { query },
     },
     commandId: direction > 0 ? "viewer.searchNext" : "viewer.searchPrevious",
   };
@@ -94,7 +101,17 @@ function findTextViewerMatch(viewer: TextViewerState, query: string, direction: 
 
 function commitTextViewerSearch(viewer: TextViewerState, direction: 1 | -1): ViewerActionResult {
   const query = viewer.searchQuery.trim();
-  if (!query) return { viewer: { ...viewer, searchMode: false, searchMessage: "Empty search." } };
+  if (!query) {
+    return {
+      viewer: {
+        ...viewer,
+        searchMode: false,
+        searchMessage: "",
+        searchMessageId: "viewer.searchEmpty",
+        searchMessageValues: undefined,
+      },
+    };
+  }
   return findTextViewerMatch(viewer, query, direction);
 }
 
@@ -171,7 +188,17 @@ export function handleViewerKey(viewer: ViewerState, key: string, pageSize: numb
   }
 
   if (viewer.searchMode) {
-    if (key === "Escape") return { viewer: { ...viewer, searchMode: false, searchMessage: "" } };
+    if (key === "Escape") {
+      return {
+        viewer: {
+          ...viewer,
+          searchMode: false,
+          searchMessage: "",
+          searchMessageId: undefined,
+          searchMessageValues: undefined,
+        },
+      };
+    }
     if (key === "Enter") return commitTextViewerSearch(viewer, 1);
     return updateTextViewerSearch(viewer, key);
   }

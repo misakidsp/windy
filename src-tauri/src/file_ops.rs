@@ -1,6 +1,7 @@
 use crate::archive::{
-    archive_creation_canceled_message, copy_archive_entry_to_directory,
-    create_archive_from_sources, extract_archive_to_directory, parse_archive_entry_path,
+    archive_creation_canceled_message, archive_extraction_canceled_message,
+    copy_archive_entry_to_directory, create_archive_from_sources, extract_archive_to_directory,
+    parse_archive_entry_path,
 };
 use crate::path_utils::{format_io_error, path_to_string};
 use crate::sftp::{
@@ -9,10 +10,13 @@ use crate::sftp::{
     SharedSftpConnection,
 };
 use crate::EntryKind;
-use serde::{Deserialize, Serialize};
+use serde::{
+    ser::{SerializeStruct, Serializer},
+    Deserialize, Serialize,
+};
 use ssh2::{OpenFlags, OpenType};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
     fs::OpenOptions,
     io::{self, Read, Write},
@@ -111,11 +115,424 @@ pub(crate) struct FileOperationResult {
     pub(crate) canceled: bool,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileOperationResultItem {
     pub(crate) path: String,
     pub(crate) message: String,
+}
+
+impl Serialize for FileOperationResultItem {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let translation = file_operation_message_translation(&self.message);
+        let mut state = serializer.serialize_struct(
+            "FileOperationResultItem",
+            if translation.is_some() { 4 } else { 2 },
+        )?;
+        state.serialize_field("path", &self.path)?;
+        state.serialize_field("message", &self.message)?;
+        if let Some((message_id, message_values)) = translation {
+            state.serialize_field("messageId", message_id)?;
+            if !message_values.is_empty() {
+                state.serialize_field("messageValues", &message_values)?;
+            }
+        }
+        state.end()
+    }
+}
+
+fn file_operation_message_translation(
+    message: &str,
+) -> Option<(&'static str, BTreeMap<String, String>)> {
+    let exact_id = match message {
+        "This SFTP file operation is not implemented yet." => {
+            Some("operation.resultMessage.sftpOperationUnsupported")
+        }
+        "Refresh completed." => Some("operation.resultMessage.refreshCompleted"),
+        "SFTP to SFTP copy is not implemented yet." => {
+            Some("operation.resultMessage.sftpToSftpCopyUnsupported")
+        }
+        "SFTP copy requires a local/SFTP source and destination." => {
+            Some("operation.resultMessage.sftpCopyRequiresMixedSources")
+        }
+        "Target is not an SFTP path." => Some("operation.resultMessage.targetNotSftpPath"),
+        "Mixed SFTP connections in one copy job are not supported." => {
+            Some("operation.resultMessage.mixedSftpCopyUnsupported")
+        }
+        "SFTP target has no file name." => {
+            Some("operation.resultMessage.sftpTargetMissingFileName")
+        }
+        "Local target has no file name." => {
+            Some("operation.resultMessage.localTargetMissingFileName")
+        }
+        "SFTP delete requires SFTP targets." => {
+            Some("operation.resultMessage.sftpDeleteRequiresTargets")
+        }
+        "Mixed SFTP connections in one delete job are not supported." => {
+            Some("operation.resultMessage.mixedSftpDeleteUnsupported")
+        }
+        "Deleted permanently from SFTP." => Some("operation.resultMessage.deletedFromSftp"),
+        "No target was resolved." => Some("operation.resultMessage.noTargetResolved"),
+        "SFTP target has no parent directory." => {
+            Some("operation.resultMessage.sftpTargetMissingParent")
+        }
+        "Requested name is the current name." => {
+            Some("operation.resultMessage.requestedNameIsCurrent")
+        }
+        "SFTP mkdir requires an SFTP destination." => {
+            Some("operation.resultMessage.sftpMkdirRequiresDestination")
+        }
+        "Destination already exists." => Some("operation.resultMessage.destinationExists"),
+        "Directory created on SFTP." => Some("operation.resultMessage.sftpDirectoryCreated"),
+        "SFTP file creation requires an SFTP destination." => {
+            Some("operation.resultMessage.sftpCreateFileRequiresDestination")
+        }
+        "File created on SFTP." => Some("operation.resultMessage.sftpFileCreated"),
+        "SFTP chmod requires SFTP targets." => {
+            Some("operation.resultMessage.sftpChmodRequiresTargets")
+        }
+        "Mixed SFTP connections in one chmod job are not supported." => {
+            Some("operation.resultMessage.mixedSftpChmodUnsupported")
+        }
+        "Removed empty SFTP directory." => {
+            Some("operation.resultMessage.sftpEmptyDirectoryRemoved")
+        }
+        "Undo can remove only an empty SFTP file." => {
+            Some("operation.resultMessage.undoRequiresEmptySftpFile")
+        }
+        "Removed empty SFTP file." => Some("operation.resultMessage.sftpEmptyFileRemoved"),
+        "Target has no parent directory." => Some("operation.resultMessage.targetMissingParent"),
+        "Changed Windows attributes." => Some("operation.resultMessage.windowsAttributesChanged"),
+        "Deleted permanently." => Some("operation.resultMessage.deletedPermanently"),
+        "Moved to Trash." => Some("operation.resultMessage.movedToTrash"),
+        "Directory created." => Some("operation.resultMessage.directoryCreated"),
+        "File created." => Some("operation.resultMessage.fileCreated"),
+        "Removed empty directory." => Some("operation.resultMessage.emptyDirectoryRemoved"),
+        "Undo can remove only an empty file." => {
+            Some("operation.resultMessage.undoRequiresEmptyFile")
+        }
+        "Removed empty file." => Some("operation.resultMessage.emptyFileRemoved"),
+        "No archive sources were resolved." => Some("operation.resultMessage.noArchiveSources"),
+        "Archive name must end with .zip, .tar, .tar.gz, or .tgz." => {
+            Some("operation.resultMessage.archiveExtensionRequired")
+        }
+        "Cannot create an archive inside a selected source directory." => {
+            Some("operation.resultMessage.archiveInsideSource")
+        }
+        "Archive links are not allowed for extraction." => {
+            Some("operation.resultMessage.archiveLinksNotAllowed")
+        }
+        "Archive special entries are not allowed for extraction." => {
+            Some("operation.resultMessage.archiveSpecialEntriesNotAllowed")
+        }
+        "Archive entry path is empty." => Some("operation.resultMessage.archiveEntryPathEmpty"),
+        "Archive creation canceled." => Some("operation.resultMessage.archiveCreationCanceled"),
+        "Archive extraction canceled." => Some("operation.resultMessage.archiveExtractionCanceled"),
+        "Archive extraction exceeded the 100,000 entry limit." => {
+            Some("operation.resultMessage.archiveExtractionEntryLimit")
+        }
+        "Archive extraction exceeded the 64 GiB expanded size limit." => {
+            Some("operation.resultMessage.archiveExtractionSizeLimit")
+        }
+        "Detailed diff canceled." => Some("operation.resultMessage.detailedDiffCanceled"),
+        "Destination path is not set." => Some("operation.resultMessage.destinationPathNotSet"),
+        "Name is not set." => Some("operation.resultMessage.nameNotSet"),
+        "Mode is not set." => Some("operation.resultMessage.modeNotSet"),
+        "Windows attribute expression is not set." => {
+            Some("operation.resultMessage.windowsAttributeExpressionNotSet")
+        }
+        "Archive entry has no file name." => {
+            Some("operation.resultMessage.archiveEntryMissingFileName")
+        }
+        "Name must not contain path separators." => {
+            Some("operation.resultMessage.namePathSeparators")
+        }
+        "Name must not contain NUL characters." => Some("operation.resultMessage.nameNul"),
+        "Name contains characters that are invalid on Windows." => {
+            Some("operation.resultMessage.nameInvalidWindows")
+        }
+        "Name is reserved on Windows." => Some("operation.resultMessage.nameReservedWindows"),
+        "Name must not end with a space or period on Windows." => {
+            Some("operation.resultMessage.nameTrailingWindows")
+        }
+        "Mode must be an octal value like 644, 755, or 0755." => {
+            Some("operation.resultMessage.modeOctalRequired")
+        }
+        "No Windows attribute changes were requested." => {
+            Some("operation.resultMessage.noWindowsAttributeChanges")
+        }
+        "Attribute values must be on, off, or keep." => {
+            Some("operation.resultMessage.windowsAttributeValues")
+        }
+        "Supported Windows attributes are readonly/r and hidden/h." => {
+            Some("operation.resultMessage.supportedWindowsAttributes")
+        }
+        _ => None,
+    };
+    if let Some(message_id) = exact_id {
+        return Some((message_id, BTreeMap::new()));
+    }
+
+    if let Some(destination) = quoted_value(message, "Copied to '", "'.") {
+        return Some((
+            "operation.resultMessage.copiedTo",
+            message_values([("destination", destination)]),
+        ));
+    }
+    if let Some(destination) = quoted_value(message, "Moved to '", "'.") {
+        return Some((
+            "operation.resultMessage.movedTo",
+            message_values([("destination", destination)]),
+        ));
+    }
+    if let Some(destination) = quoted_value(message, "Renamed to '", "'.") {
+        return Some((
+            "operation.resultMessage.renamedTo",
+            message_values([("destination", destination)]),
+        ));
+    }
+    if let Some(destination) = quoted_value(message, "Downloaded to '", "'.") {
+        return Some((
+            "operation.resultMessage.downloadedTo",
+            message_values([("destination", destination)]),
+        ));
+    }
+    if let Some(destination) = quoted_value(message, "Uploaded to '", "'.") {
+        return Some((
+            "operation.resultMessage.uploadedTo",
+            message_values([("destination", destination)]),
+        ));
+    }
+    if let Some(destination) = quoted_value(message, "Extracted to '", "'.") {
+        return Some((
+            "operation.resultMessage.extractedTo",
+            message_values([("destination", destination)]),
+        ));
+    }
+    if let Some(destination) = quoted_value(message, "Destination already exists: '", "'") {
+        return Some((
+            "operation.resultMessage.destinationExistsAt",
+            message_values([("destination", destination)]),
+        ));
+    }
+    if let Some(mode) = value_between(message, "Changed mode to ", ".") {
+        return Some((
+            "operation.resultMessage.modeChanged",
+            message_values([("mode", mode)]),
+        ));
+    }
+    if let Some(mode) = value_between(message, "Changed remote mode to ", ".") {
+        return Some((
+            "operation.resultMessage.remoteModeChanged",
+            message_values([("mode", mode)]),
+        ));
+    }
+    if let Some(count) = value_between(message, "Archive created with ", " item(s).") {
+        return Some((
+            "operation.resultMessage.archiveCreated",
+            message_values([("count", count)]),
+        ));
+    }
+    if let Some(connection_id) =
+        value_between(message, "SFTP connection is busy or unavailable: ", "")
+    {
+        return Some((
+            "operation.resultMessage.sftpConnectionBusy",
+            message_values([("connectionId", connection_id)]),
+        ));
+    }
+    if let Some(connection_id) = value_between(message, "SFTP connection is not available: ", "") {
+        return Some((
+            "operation.resultMessage.sftpConnectionUnavailable",
+            message_values([("connectionId", connection_id)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Start SFTP subsystem failed: ", "") {
+        return Some((
+            "operation.resultMessage.sftpSubsystemFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Rename SFTP entry failed for '") {
+        return Some((
+            "operation.resultMessage.renameSftpEntryFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Change SFTP mode failed for '") {
+        return Some((
+            "operation.resultMessage.changeSftpModeFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Delete SFTP file failed for '") {
+        return Some((
+            "operation.resultMessage.deleteSftpFileFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Create SFTP directory failed: ", "") {
+        return Some((
+            "operation.resultMessage.createSftpDirectoryFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Create SFTP file failed: ", "") {
+        return Some((
+            "operation.resultMessage.createSftpFileFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some((path, error)) =
+        quoted_path_error(message, "Remove empty SFTP directory failed for '")
+    {
+        return Some((
+            "operation.resultMessage.removeEmptySftpDirectoryFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Remove empty SFTP file failed for '") {
+        return Some((
+            "operation.resultMessage.removeEmptySftpFileFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Read SFTP metadata failed for '") {
+        return Some((
+            "operation.resultMessage.readSftpMetadataFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Read SFTP directory failed for '") {
+        return Some((
+            "operation.resultMessage.readSftpDirectoryFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Open SFTP file failed for '") {
+        return Some((
+            "operation.resultMessage.openSftpFileFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Finalize SFTP part file failed for '")
+    {
+        return Some((
+            "operation.resultMessage.finalizeSftpPartFileFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Remove SFTP directory failed for '") {
+        return Some((
+            "operation.resultMessage.removeSftpDirectoryFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some((path, error)) = quoted_path_error(message, "Move to Trash failed for '") {
+        return Some((
+            "operation.resultMessage.moveToTrashFailed",
+            message_values([("path", path), ("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Read archive failed: ", "") {
+        return Some((
+            "operation.resultMessage.readArchiveFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Read archive entries failed: ", "") {
+        return Some((
+            "operation.resultMessage.readArchiveEntriesFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Read archive entry failed: ", "") {
+        return Some((
+            "operation.resultMessage.readArchiveEntryFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Read archive entry path failed: ", "") {
+        return Some((
+            "operation.resultMessage.readArchiveEntryPathFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Read archive entry bytes failed: ", "") {
+        return Some((
+            "operation.resultMessage.readArchiveEntryBytesFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Finish zip archive failed: ", "") {
+        return Some((
+            "operation.resultMessage.finishZipArchiveFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Finish tar.gz archive failed: ", "") {
+        return Some((
+            "operation.resultMessage.finishTarGzArchiveFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Finish gzip stream failed: ", "") {
+        return Some((
+            "operation.resultMessage.finishGzipStreamFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Finish tar entries failed: ", "") {
+        return Some((
+            "operation.resultMessage.finishTarEntriesFailed",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(error) = value_between(message, "Invalid name regex: ", "") {
+        return Some((
+            "operation.resultMessage.invalidNameRegex",
+            message_values([("error", error)]),
+        ));
+    }
+    if let Some(path) = quoted_value(message, "Not a regular file: '", "'") {
+        return Some((
+            "operation.resultMessage.notRegularFile",
+            message_values([("path", path)]),
+        ));
+    }
+    if let Some(path) = value_between(message, "Archive entry is a directory: ", "") {
+        return Some((
+            "operation.resultMessage.archiveEntryDirectory",
+            message_values([("path", path)]),
+        ));
+    }
+    None
+}
+
+fn quoted_value(message: &str, prefix: &str, suffix: &str) -> Option<String> {
+    value_between(message, prefix, suffix).map(str::to_string)
+}
+
+fn quoted_path_error(message: &str, prefix: &str) -> Option<(String, String)> {
+    let rest = message.strip_prefix(prefix)?;
+    let (path, error) = rest.split_once("': ")?;
+    Some((path.to_string(), error.to_string()))
+}
+
+fn value_between<'a>(message: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
+    message.strip_prefix(prefix)?.strip_suffix(suffix)
+}
+
+fn message_values<const N: usize>(
+    pairs: [(&str, impl Into<String>); N],
+) -> BTreeMap<String, String> {
+    pairs
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.into()))
+        .collect()
 }
 
 #[tauri::command]
@@ -127,25 +544,20 @@ pub(crate) async fn execute_file_operation_job(
     let cancellation = cancellation_state.register(job.id.as_deref());
     let job_id = job.id.clone();
     if job_involves_sftp(&job) {
-        let mut result = empty_result();
-        match job.kind {
-            FileOperationKind::Copy => copy_sftp_targets(&state, &job, &mut result, &cancellation),
-            FileOperationKind::Rename => rename_sftp_target(&state, &job, &mut result),
-            FileOperationKind::Delete => delete_sftp_targets(&state, &job, &mut result),
-            FileOperationKind::Mkdir => create_sftp_directory(&state, &job, &mut result),
-            FileOperationKind::CreateFile => create_sftp_file(&state, &job, &mut result),
-            FileOperationKind::RemoveEmptyDirectory => {
-                remove_empty_sftp_directory(&state, &job, &mut result)
+        let operation_state = match state.snapshot() {
+            Ok(state) => state,
+            Err(error) => {
+                cancellation_state.unregister(job_id.as_deref());
+                return Err(error);
             }
-            FileOperationKind::RemoveEmptyFile => remove_empty_sftp_file(&state, &job, &mut result),
-            FileOperationKind::Chmod => chmod_sftp_targets(&state, &job, &mut result),
-            _ => result.failed.push(FileOperationResultItem {
-                path: String::new(),
-                message: "This SFTP file operation is not implemented yet.".to_string(),
-            }),
-        }
+        };
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            execute_sftp_file_operation_job_blocking(&operation_state, &job, &cancellation)
+        })
+        .await
+        .map_err(|error| format!("File operation task failed: {error}"));
         cancellation_state.unregister(job_id.as_deref());
-        return Ok(result);
+        return result;
     }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -154,6 +566,31 @@ pub(crate) async fn execute_file_operation_job(
     .await
     .map_err(|error| format!("File operation task failed: {error}"));
     cancellation_state.unregister(job_id.as_deref());
+    result
+}
+
+fn execute_sftp_file_operation_job_blocking(
+    state: &SftpState,
+    job: &FileOperationJob,
+    cancellation: &Arc<AtomicBool>,
+) -> FileOperationResult {
+    let mut result = empty_result();
+    match job.kind {
+        FileOperationKind::Copy => copy_sftp_targets(state, job, &mut result, cancellation),
+        FileOperationKind::Rename => rename_sftp_target(state, job, &mut result),
+        FileOperationKind::Delete => delete_sftp_targets(state, job, &mut result),
+        FileOperationKind::Mkdir => create_sftp_directory(state, job, &mut result),
+        FileOperationKind::CreateFile => create_sftp_file(state, job, &mut result),
+        FileOperationKind::RemoveEmptyDirectory => {
+            remove_empty_sftp_directory(state, job, &mut result)
+        }
+        FileOperationKind::RemoveEmptyFile => remove_empty_sftp_file(state, job, &mut result),
+        FileOperationKind::Chmod => chmod_sftp_targets(state, job, &mut result),
+        _ => result.failed.push(FileOperationResultItem {
+            path: String::new(),
+            message: "This SFTP file operation is not implemented yet.".to_string(),
+        }),
+    }
     result
 }
 
@@ -200,6 +637,18 @@ fn cancellation_error(cancellation: &Arc<AtomicBool>) -> Result<(), String> {
 
 fn mark_canceled_if_needed(message: &str, result: &mut FileOperationResult) -> bool {
     if message == OPERATION_CANCELED_MESSAGE {
+        result.canceled = true;
+        true
+    } else {
+        false
+    }
+}
+
+fn mark_archive_extraction_canceled_if_needed(
+    message: &str,
+    result: &mut FileOperationResult,
+) -> bool {
+    if message == archive_extraction_canceled_message() {
         result.canceled = true;
         true
     } else {
@@ -356,7 +805,12 @@ fn copy_targets(
         }
         let operation =
             if let Some((archive_path, inner_path)) = parse_archive_entry_path(&target.path) {
-                copy_archive_entry_to_directory(&archive_path, &inner_path, &destination_dir)
+                copy_archive_entry_to_directory(
+                    &archive_path,
+                    &inner_path,
+                    &destination_dir,
+                    cancellation,
+                )
             } else {
                 let source = PathBuf::from(&target.path);
                 target_destination(&destination_dir, &source)
@@ -369,7 +823,9 @@ fn copy_targets(
                 message: format!("Copied to '{}'.", destination.display()),
             }),
             Err(message) => {
-                if mark_canceled_if_needed(&message, result) {
+                if mark_canceled_if_needed(&message, result)
+                    || mark_archive_extraction_canceled_if_needed(&message, result)
+                {
                     break;
                 }
                 result.failed.push(FileOperationResultItem {
@@ -382,7 +838,7 @@ fn copy_targets(
 }
 
 fn copy_sftp_targets(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     job: &FileOperationJob,
     result: &mut FileOperationResult,
     cancellation: &Arc<AtomicBool>,
@@ -418,7 +874,7 @@ fn copy_sftp_targets(
 }
 
 fn shared_sftp_connection(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     connection_id: &str,
     result: &mut FileOperationResult,
 ) -> Option<SharedSftpConnection> {
@@ -435,7 +891,7 @@ fn shared_sftp_connection(
 }
 
 fn copy_sftp_targets_to_local(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     job: &FileOperationJob,
     result: &mut FileOperationResult,
     connection_id: &str,
@@ -534,7 +990,7 @@ fn copy_sftp_targets_to_local(
 }
 
 fn copy_local_targets_to_sftp(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     job: &FileOperationJob,
     result: &mut FileOperationResult,
     connection_id: &str,
@@ -618,34 +1074,38 @@ fn download_sftp_entry(
 ) -> Result<(), String> {
     cancellation_error(cancellation)?;
     let stat = sftp
-        .stat(Path::new(remote_path))
+        .lstat(Path::new(remote_path))
         .map_err(|error| format!("Read SFTP metadata failed for '{remote_path}': {error}"))?;
-    if sftp_entry_kind(stat.perm) == EntryKind::Directory {
+    if sftp_download_entry_action(sftp_entry_kind(stat.perm), remote_path)?
+        == SftpDownloadEntryAction::RecurseDirectory
+    {
         fs::create_dir_all(destination)
             .map_err(|error| format_io_error("create download directory", destination, error))?;
-        let entries = sftp
-            .readdir(Path::new(remote_path))
-            .map_err(|error| format!("Read SFTP directory failed for '{remote_path}': {error}"))?;
-        for (entry_path, _) in entries {
-            cancellation_error(cancellation)?;
-            let Some(name) = entry_path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            if name == "." || name == ".." {
-                continue;
-            }
-            if let Err(error) = download_sftp_entry(
-                sftp,
-                &join_sftp_remote_path(remote_path, name),
-                &destination.join(name),
-                part_threshold_bytes,
-                cancellation,
-            ) {
-                if error == OPERATION_CANCELED_MESSAGE {
-                    let _ = fs::remove_dir_all(destination);
+        let download_result = (|| {
+            let entries = sftp.readdir(Path::new(remote_path)).map_err(|error| {
+                format!("Read SFTP directory failed for '{remote_path}': {error}")
+            })?;
+            for (entry_path, _) in entries {
+                cancellation_error(cancellation)?;
+                let Some(name) = entry_path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                if name == "." || name == ".." {
+                    continue;
                 }
-                return Err(error);
+                download_sftp_entry(
+                    sftp,
+                    &join_sftp_remote_path(remote_path, name),
+                    &destination.join(name),
+                    part_threshold_bytes,
+                    cancellation,
+                )?;
             }
+            Ok(())
+        })();
+        if let Err(error) = download_result {
+            let _ = fs::remove_dir_all(destination);
+            return Err(error);
         }
         return Ok(());
     }
@@ -671,8 +1131,9 @@ fn download_sftp_entry(
     if let Err(error) =
         copy_stream_with_cancellation(&mut remote_file, &mut local_file, cancellation)
     {
+        drop(local_file);
+        let _ = fs::remove_file(&write_destination);
         if error == OPERATION_CANCELED_MESSAGE {
-            let _ = fs::remove_file(&write_destination);
             return Err(error);
         }
         return Err(transfer_error(
@@ -682,9 +1143,11 @@ fn download_sftp_entry(
         ));
     }
     if use_part_file {
-        fs::rename(&write_destination, destination).map_err(|error| {
-            format_io_error("finish downloaded part file", &write_destination, error)
-        })?;
+        if let Err(error) = fs::rename(&write_destination, destination) {
+            let message = format_io_error("finish downloaded part file", &write_destination, error);
+            let _ = fs::remove_file(&write_destination);
+            return Err(message);
+        }
     }
     Ok(())
 }
@@ -703,21 +1166,35 @@ fn upload_local_entry_to_sftp(
         return Err("Uploading symlinks to SFTP is not implemented yet.".to_string());
     }
     if metadata.is_dir() {
-        ensure_sftp_directory(sftp, remote_path)?;
-        for entry in fs::read_dir(source)
-            .map_err(|error| format_io_error("read directory", source, error))?
-        {
-            cancellation_error(cancellation)?;
-            let entry =
-                entry.map_err(|error| format_io_error("read directory entry", source, error))?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            upload_local_entry_to_sftp(
-                sftp,
-                &entry.path(),
-                &join_sftp_remote_path(remote_path, &name),
-                part_threshold_bytes,
-                cancellation,
-            )?;
+        if sftp.lstat(Path::new(remote_path)).is_ok() {
+            return Err(format!("Destination already exists: '{remote_path}'"));
+        }
+        if let Some(parent) = sftp_parent_remote_path(remote_path) {
+            ensure_sftp_directory(sftp, &parent)?;
+        }
+        sftp.mkdir(Path::new(remote_path), 0o755)
+            .map_err(|error| format!("Create SFTP directory failed: {error}"))?;
+        let upload_result = (|| {
+            for entry in fs::read_dir(source)
+                .map_err(|error| format_io_error("read directory", source, error))?
+            {
+                cancellation_error(cancellation)?;
+                let entry = entry
+                    .map_err(|error| format_io_error("read directory entry", source, error))?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                upload_local_entry_to_sftp(
+                    sftp,
+                    &entry.path(),
+                    &join_sftp_remote_path(remote_path, &name),
+                    part_threshold_bytes,
+                    cancellation,
+                )?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = upload_result {
+            let _ = delete_sftp_entry(sftp, remote_path);
+            return Err(error);
         }
         return Ok(());
     }
@@ -755,8 +1232,9 @@ fn upload_local_entry_to_sftp(
     if let Err(error) =
         copy_stream_with_cancellation(&mut local_file, &mut remote_file, cancellation)
     {
+        drop(remote_file);
+        let _ = sftp.unlink(Path::new(&write_remote_path));
         if error == OPERATION_CANCELED_MESSAGE {
-            let _ = sftp.unlink(Path::new(&write_remote_path));
             return Err(error);
         }
         return Err(format!(
@@ -765,10 +1243,14 @@ fn upload_local_entry_to_sftp(
     }
     drop(remote_file);
     if use_part_file {
-        sftp.rename(Path::new(&write_remote_path), Path::new(remote_path), None)
-            .map_err(|error| {
-                format!("Finalize SFTP part file failed for '{write_remote_path}': {error}")
-            })?;
+        if let Err(error) = sftp.rename(Path::new(&write_remote_path), Path::new(remote_path), None)
+        {
+            let _ = sftp.unlink(Path::new(&write_remote_path));
+            let path = &write_remote_path;
+            return Err(format!(
+                "Finalize SFTP part file failed for '{path}': {error}"
+            ));
+        }
     }
     Ok(())
 }
@@ -789,7 +1271,7 @@ fn local_part_path(destination: &Path) -> Result<PathBuf, String> {
 }
 
 fn delete_sftp_targets(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     job: &FileOperationJob,
     result: &mut FileOperationResult,
 ) {
@@ -857,11 +1339,7 @@ fn delete_sftp_targets(
     }
 }
 
-fn rename_sftp_target(
-    state: &State<'_, SftpState>,
-    job: &FileOperationJob,
-    result: &mut FileOperationResult,
-) {
+fn rename_sftp_target(state: &SftpState, job: &FileOperationJob, result: &mut FileOperationResult) {
     let Some(target) = job.targets.first() else {
         result.failed.push(FileOperationResultItem {
             path: String::new(),
@@ -948,7 +1426,7 @@ fn rename_sftp_target(
 }
 
 fn create_sftp_directory(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     job: &FileOperationJob,
     result: &mut FileOperationResult,
 ) {
@@ -1015,11 +1493,7 @@ fn create_sftp_directory(
     }
 }
 
-fn create_sftp_file(
-    state: &State<'_, SftpState>,
-    job: &FileOperationJob,
-    result: &mut FileOperationResult,
-) {
+fn create_sftp_file(state: &SftpState, job: &FileOperationJob, result: &mut FileOperationResult) {
     let destination_path = job.destination_path.as_deref().unwrap_or_default();
     let Some((connection_id, remote_parent_path)) = parse_sftp_uri(destination_path) else {
         result.failed.push(FileOperationResultItem {
@@ -1088,11 +1562,7 @@ fn create_sftp_file(
     }
 }
 
-fn chmod_sftp_targets(
-    state: &State<'_, SftpState>,
-    job: &FileOperationJob,
-    result: &mut FileOperationResult,
-) {
+fn chmod_sftp_targets(state: &SftpState, job: &FileOperationJob, result: &mut FileOperationResult) {
     let mode_text = match requested_mode(job) {
         Ok(mode_text) => mode_text,
         Err(message) => {
@@ -1187,7 +1657,7 @@ fn chmod_sftp_targets(
 }
 
 fn remove_empty_sftp_directory(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     job: &FileOperationJob,
     result: &mut FileOperationResult,
 ) {
@@ -1241,7 +1711,7 @@ fn remove_empty_sftp_directory(
 }
 
 fn remove_empty_sftp_file(
-    state: &State<'_, SftpState>,
+    state: &SftpState,
     job: &FileOperationJob,
     result: &mut FileOperationResult,
 ) {
@@ -1313,9 +1783,11 @@ fn remove_empty_sftp_file(
 
 fn delete_sftp_entry(sftp: &ssh2::Sftp, remote_path: &str) -> Result<(), String> {
     let stat = sftp
-        .stat(Path::new(remote_path))
+        .lstat(Path::new(remote_path))
         .map_err(|error| format!("Read SFTP metadata failed for '{remote_path}': {error}"))?;
-    if sftp_entry_kind(stat.perm) == EntryKind::Directory {
+    if sftp_delete_entry_action(sftp_entry_kind(stat.perm))
+        == SftpDeleteEntryAction::RecurseDirectory
+    {
         let entries = sftp
             .readdir(Path::new(remote_path))
             .map_err(|error| format!("Read SFTP directory failed for '{remote_path}': {error}"))?;
@@ -1336,6 +1808,42 @@ fn delete_sftp_entry(sftp: &ssh2::Sftp, remote_path: &str) -> Result<(), String>
 
     sftp.unlink(Path::new(remote_path))
         .map_err(|error| format!("Delete SFTP file failed for '{remote_path}': {error}"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SftpDownloadEntryAction {
+    DownloadFile,
+    RecurseDirectory,
+}
+
+fn sftp_download_entry_action(
+    kind: EntryKind,
+    remote_path: &str,
+) -> Result<SftpDownloadEntryAction, String> {
+    match kind {
+        EntryKind::File => Ok(SftpDownloadEntryAction::DownloadFile),
+        EntryKind::Directory => Ok(SftpDownloadEntryAction::RecurseDirectory),
+        EntryKind::Symlink => Err(format!(
+            "Downloading SFTP symlinks is not supported: '{remote_path}'"
+        )),
+        EntryKind::Other => Err(format!(
+            "Downloading this SFTP entry type is not supported: '{remote_path}'"
+        )),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SftpDeleteEntryAction {
+    Unlink,
+    RecurseDirectory,
+}
+
+fn sftp_delete_entry_action(kind: EntryKind) -> SftpDeleteEntryAction {
+    if kind == EntryKind::Directory {
+        SftpDeleteEntryAction::RecurseDirectory
+    } else {
+        SftpDeleteEntryAction::Unlink
+    }
 }
 
 fn ensure_sftp_directory(sftp: &ssh2::Sftp, remote_path: &str) -> Result<(), String> {
@@ -1851,15 +2359,20 @@ fn extract_archives(
             break;
         }
         let archive_path = PathBuf::from(&target.path);
-        match extract_archive_to_directory(&archive_path, &destination_dir) {
+        match extract_archive_to_directory(&archive_path, &destination_dir, cancellation) {
             Ok(destination) => result.succeeded.push(FileOperationResultItem {
                 path: target.path.clone(),
                 message: format!("Extracted to '{}'.", destination.display()),
             }),
-            Err(message) => result.failed.push(FileOperationResultItem {
-                path: target.path.clone(),
-                message,
-            }),
+            Err(message) => {
+                if mark_archive_extraction_canceled_if_needed(&message, result) {
+                    break;
+                }
+                result.failed.push(FileOperationResultItem {
+                    path: target.path.clone(),
+                    message,
+                });
+            }
         }
     }
 }
@@ -1944,9 +2457,7 @@ fn copy_entry(
         copy_symlink(source, destination)?;
     } else if source.is_dir() {
         if let Err(error) = copy_directory(source, destination, cancellation) {
-            if error == OPERATION_CANCELED_MESSAGE {
-                let _ = fs::remove_dir_all(destination);
-            }
+            let _ = fs::remove_dir_all(destination);
             return Err(error);
         }
     } else {
@@ -2001,8 +2512,9 @@ fn copy_file_with_cancellation(
         .open(destination)
         .map_err(|error| format_io_error("create copy destination", destination, error))?;
     if let Err(error) = copy_stream_with_cancellation(&mut input, &mut output, cancellation) {
+        drop(output);
+        let _ = fs::remove_file(destination);
         if error == OPERATION_CANCELED_MESSAGE {
-            let _ = fs::remove_file(destination);
             return Err(error);
         }
         return Err(transfer_error("copy", source, error));
@@ -2139,5 +2651,31 @@ mod tests {
 
         assert_eq!(result, Err(OPERATION_CANCELED_MESSAGE.to_string()));
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn sftp_download_rejects_symlinks_and_special_entries() {
+        assert!(sftp_download_entry_action(EntryKind::Symlink, "/link").is_err());
+        assert!(sftp_download_entry_action(EntryKind::Other, "/socket").is_err());
+        assert_eq!(
+            sftp_download_entry_action(EntryKind::File, "/file").unwrap(),
+            SftpDownloadEntryAction::DownloadFile
+        );
+        assert_eq!(
+            sftp_download_entry_action(EntryKind::Directory, "/directory").unwrap(),
+            SftpDownloadEntryAction::RecurseDirectory
+        );
+    }
+
+    #[test]
+    fn sftp_delete_unlinks_symlinks_without_recursing() {
+        assert_eq!(
+            sftp_delete_entry_action(EntryKind::Symlink),
+            SftpDeleteEntryAction::Unlink
+        );
+        assert_eq!(
+            sftp_delete_entry_action(EntryKind::Directory),
+            SftpDeleteEntryAction::RecurseDirectory
+        );
     }
 }

@@ -8,6 +8,8 @@ use std::{
 };
 
 pub(crate) const SEARCH_MAX_RESULTS: usize = 10_000;
+const SEARCH_MAX_VISITED_ENTRIES: usize = 1_000_000;
+const SEARCH_MAX_DEPTH: usize = 256;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,10 +53,12 @@ struct SearchContext<'a> {
 }
 
 #[tauri::command]
-pub(crate) fn search_directory(
+pub(crate) async fn search_directory(
     request: SearchDirectoryRequest,
 ) -> Result<SearchDirectoryListing, String> {
-    search_directory_blocking(request)
+    tauri::async_runtime::spawn_blocking(move || search_directory_blocking(request))
+        .await
+        .map_err(|error| format!("Search task failed: {error}"))?
 }
 
 pub(crate) fn search_directory_blocking(
@@ -94,6 +98,7 @@ pub(crate) fn search_directory_blocking(
 
     let mut entries = Vec::new();
     let mut truncated = false;
+    let mut visited_entries = 0usize;
     let context = SearchContext {
         regex: &regex,
         request: &request,
@@ -101,7 +106,14 @@ pub(crate) fn search_directory_blocking(
         hidden_mode: &hidden_mode,
         readonly_mode: &readonly_mode,
     };
-    collect_search_entries(&root_path, &context, &mut entries, &mut truncated)?;
+    collect_search_entries(
+        &root_path,
+        &context,
+        &mut entries,
+        &mut truncated,
+        &mut visited_entries,
+        0,
+    )?;
     sort_entries(&mut entries);
 
     let query_label = if name_regex.is_empty() {
@@ -140,6 +152,8 @@ fn collect_search_entries(
     context: &SearchContext<'_>,
     entries: &mut Vec<FileEntry>,
     truncated: &mut bool,
+    visited_entries: &mut usize,
+    depth: usize,
 ) -> Result<(), String> {
     if *truncated {
         return Ok(());
@@ -149,6 +163,11 @@ fn collect_search_entries(
         .map_err(|error| format_io_error("read search root", current_path, error))?
     {
         if *truncated {
+            break;
+        }
+        *visited_entries = visited_entries.saturating_add(1);
+        if *visited_entries > SEARCH_MAX_VISITED_ENTRIES {
+            *truncated = true;
             break;
         }
         let Ok(entry) = entry else {
@@ -168,7 +187,18 @@ fn collect_search_entries(
             }
         }
         if should_recurse {
-            let _ = collect_search_entries(&path, context, entries, truncated);
+            if depth >= SEARCH_MAX_DEPTH {
+                *truncated = true;
+                break;
+            }
+            collect_search_entries(
+                &path,
+                context,
+                entries,
+                truncated,
+                visited_entries,
+                depth + 1,
+            )?;
         }
     }
     Ok(())

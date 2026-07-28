@@ -1,4 +1,9 @@
-import { register } from "node:module";
+import * as module from "node:module";
 import { pathToFileURL } from "node:url";
+import * as hooks from "./ts-test-loader.mjs";
 
-register("./scripts/ts-test-loader.mjs", pathToFileURL("./"));
+if (typeof module.registerHooks === "function") {
+  module.registerHooks(hooks);
+} else {
+  module.register("./scripts/ts-test-loader.mjs", pathToFileURL("./"));
+}

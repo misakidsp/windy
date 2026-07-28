@@ -1,4 +1,5 @@
 import { entryVisibleBecauseSelected, entryVisibleByHiddenSetting, quickFilterNeedle } from "./fileListModel";
+import { translateMessage, type Translate } from "./localization";
 import type { FileEntry, PaneState } from "./types";
 
 export function formatSize(entry: FileEntry): string {
@@ -37,17 +38,33 @@ export function selectedKeptByFilterCount(pane: PaneState, visibleEntries: FileE
   return visibleEntries.filter((entry) => entryVisibleBecauseSelected(pane, entry)).length;
 }
 
-export function paneMeta(pane: PaneState, visibleEntries: FileEntry[]): string {
+const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
+
+export function paneMeta(pane: PaneState, visibleEntries: FileEntry[], t: Translate = fallbackTranslate): string {
   const visibleCount = visibleEntries.length;
-  const hiddenLabel = pane.showHiddenFiles ? " / hidden:on" : "";
-  const sortLabel = ` / sort:${pane.sortMode}`;
+  const hiddenLabel = pane.showHiddenFiles ? t("pane.metaHidden") : "";
+  const sortLabel = t("pane.metaSort", { sort: pane.sortMode });
   if (!pane.quickFilterQuery) {
-    return `${visibleCount}/${pane.entries.length} items / ${pane.selectedKeys.size} selected${sortLabel}${hiddenLabel}`;
+    return t("pane.meta", {
+      visible: visibleCount,
+      total: pane.entries.length,
+      selected: pane.selectedKeys.size,
+      sort: sortLabel,
+      hidden: hiddenLabel,
+    });
   }
 
   const keptSelected = selectedKeptByFilterCount(pane, visibleEntries);
-  const keptLabel = keptSelected > 0 ? ` / ${keptSelected} kept` : "";
-  return `${visibleCount} shown / ${quickFilterMatchCount(pane)} matched / ${pane.entries.length} items / ${pane.selectedKeys.size} selected${keptLabel}${sortLabel}${hiddenLabel}`;
+  const keptLabel = keptSelected > 0 ? t("pane.metaKept", { count: keptSelected }) : "";
+  return t("pane.metaFiltered", {
+    visible: visibleCount,
+    matched: quickFilterMatchCount(pane),
+    total: pane.entries.length,
+    selected: pane.selectedKeys.size,
+    kept: keptLabel,
+    sort: sortLabel,
+    hidden: hiddenLabel,
+  });
 }
 
 export function focusedEntryPath(pane: PaneState, visibleEntries: FileEntry[]): string {

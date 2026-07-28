@@ -2,6 +2,8 @@
 
 Windy is currently published as a beta application.
 
+Current release: `v0.2.3-beta.1`.
+
 The beta is intended for people who are comfortable with keyboard-driven file
 managers and can tolerate rough edges while the app is still stabilizing.
 
@@ -19,6 +21,14 @@ managers and can tolerate rough edges while the app is still stabilizing.
 - Safe Mode backs up the current main settings and starts with default general,
   appearance, keybinding, and language settings. Use it when a broken setting
   prevents normal startup.
+- Copy, SFTP transfer, and archive extraction check cancellation between entries
+  and file chunks and remove incomplete output where possible.
+- Archive extraction accepts regular files and directories only and applies
+  entry-count and expanded-size limits.
+- Search and directory/archive listings have explicit result limits to avoid
+  unbounded memory use.
+- Settings are written atomically. Unknown fields and unsupported future schema
+  versions are rejected without rewriting the original file.
 
 ## Platform Notes
 

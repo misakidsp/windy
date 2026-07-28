@@ -1,7 +1,9 @@
 use crate::path_utils::{expand_user_path, home_path};
 use crate::{sort_entries, EntryKind, FileEntry};
 use serde::{Deserialize, Serialize};
-use ssh2::{CheckResult, HashType, HostKeyType, KnownHostFileKind, KnownHostKeyFormat, Session};
+use ssh2::{
+    CheckResult, ErrorCode, HashType, HostKeyType, KnownHostFileKind, KnownHostKeyFormat, Session,
+};
 use std::{
     collections::HashMap,
     fs,
@@ -16,6 +18,10 @@ use std::{
 };
 use tauri::State;
 use zeroize::Zeroizing;
+
+const SFTP_LIST_MAX_ENTRIES: usize = 100_000;
+const LIBSSH2_ERROR_FILE: i32 = -16;
+const LIBSSH2_ERROR_EAGAIN: i32 = -37;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +39,7 @@ pub(crate) struct SftpConnectionRequest {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SftpConnectionProfile {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -54,6 +60,7 @@ pub(crate) struct SftpConnectionTestResult {
     display_name: String,
     remote_path: String,
     message: String,
+    message_id: String,
 }
 
 #[derive(Serialize)]
@@ -100,6 +107,17 @@ impl SftpState {
             .map_err(|_| format!("SFTP connection is busy or unavailable: {connection_id}"))?
             .last_used_at = next_sftp_session_sequence();
         Ok(connection)
+    }
+
+    pub(crate) fn snapshot(&self) -> Result<Self, String> {
+        let connections = self
+            .connections
+            .lock()
+            .map_err(|_| "SFTP connection state is unavailable.".to_string())?
+            .clone();
+        Ok(Self {
+            connections: Mutex::new(connections),
+        })
     }
 }
 
@@ -170,6 +188,7 @@ pub(crate) async fn test_sftp_connection(
         display_name,
         remote_path,
         message: "SFTP connection succeeded.".to_string(),
+        message_id: "location.sftpConnectionSucceeded".to_string(),
     })
 }
 
@@ -222,19 +241,23 @@ pub(crate) fn disconnect_sftp_connection(
 }
 
 #[tauri::command]
-pub(crate) fn list_sftp_directory(
+pub(crate) async fn list_sftp_directory(
     state: State<'_, SftpState>,
     connection_id: String,
     remote_path: String,
 ) -> Result<SftpDirectoryListing, String> {
     let normalized_path = normalized_sftp_remote_path(Some(&remote_path));
     let connection = state.connection(&connection_id)?;
-    let mut connection = connection
-        .lock()
-        .map_err(|_| format!("SFTP connection is busy or unavailable: {connection_id}"))?;
-    connection.remote_path = normalized_path.clone();
-    connection.last_used_at = next_sftp_session_sequence();
-    list_sftp_directory_blocking(&connection_id, &mut connection, &normalized_path)
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut connection = connection
+            .lock()
+            .map_err(|_| format!("SFTP connection is busy or unavailable: {connection_id}"))?;
+        connection.remote_path = normalized_path.clone();
+        connection.last_used_at = next_sftp_session_sequence();
+        list_sftp_directory_blocking(&connection_id, &mut connection, &normalized_path)
+    })
+    .await
+    .map_err(|error| format!("SFTP directory listing task failed: {error}"))?
 }
 
 fn test_sftp_connection_blocking(
@@ -575,20 +598,30 @@ fn list_sftp_directory_blocking(
         .session
         .sftp()
         .map_err(|error| format!("Start SFTP subsystem failed: {error}"))?;
-    let entries = sftp
-        .readdir(Path::new(remote_path))
+    let mut directory = sftp
+        .opendir(Path::new(remote_path))
         .map_err(|error| format!("Read SFTP directory failed: {error}"))?;
-
-    let mut file_entries = entries
-        .into_iter()
-        .filter_map(|(path, stat)| {
-            let name = path.file_name()?.to_string_lossy().to_string();
-            if name == "." || name == ".." {
-                return None;
+    let mut file_entries = Vec::new();
+    loop {
+        match directory.readdir() {
+            Ok((path, stat)) => {
+                let Some(name) = path.file_name() else {
+                    continue;
+                };
+                let name = name.to_string_lossy().to_string();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                if file_entries.len() >= SFTP_LIST_MAX_ENTRIES {
+                    return Err("SFTP listing exceeded the 100,000 entry limit.".to_string());
+                }
+                file_entries.push(sftp_file_entry(connection_id, remote_path, name, stat));
             }
-            Some(sftp_file_entry(connection_id, remote_path, name, stat))
-        })
-        .collect::<Vec<_>>();
+            Err(error) if error.code() == ErrorCode::Session(LIBSSH2_ERROR_FILE) => break,
+            Err(error) if error.code() == ErrorCode::Session(LIBSSH2_ERROR_EAGAIN) => continue,
+            Err(error) => return Err(format!("Read SFTP directory failed: {error}")),
+        }
+    }
     sort_entries(&mut file_entries);
 
     Ok(SftpDirectoryListing {
@@ -729,4 +762,25 @@ fn normalized_optional_string(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SftpConnectionTestResult;
+
+    #[test]
+    fn sftp_connection_result_serializes_localization_metadata() {
+        let result = SftpConnectionTestResult {
+            connection_id: "sftp-1".to_string(),
+            display_name: "example".to_string(),
+            remote_path: "/home/user".to_string(),
+            message: "SFTP connection succeeded.".to_string(),
+            message_id: "location.sftpConnectionSucceeded".to_string(),
+        };
+
+        let value = serde_json::to_value(result).expect("serialize SFTP connection result");
+        assert_eq!(value["connectionId"], "sftp-1");
+        assert_eq!(value["message"], "SFTP connection succeeded.");
+        assert_eq!(value["messageId"], "location.sftpConnectionSucceeded");
+    }
 }

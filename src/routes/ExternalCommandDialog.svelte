@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { ExternalCommandDefinition, PaneSourceKind } from "./types";
+  import type { Translate } from "./localization";
+  import { formatPropertySourceKind } from "./propertyModel";
 
   export let commands: ExternalCommandDefinition[] = [];
   export let loading = false;
@@ -7,6 +9,7 @@
   export let cursorIndex = 0;
   export let sourceKind: PaneSourceKind;
   export let targetCount = 0;
+  export let t: Translate = (id) => id;
 </script>
 
 <div class="dialog-backdrop" role="presentation">
@@ -18,27 +21,27 @@
     aria-describedby="command-dialog-message"
   >
     <header class="confirm-dialog-header">
-      <div id="command-dialog-title">External Commands</div>
-      <div class="confirm-risk">phase 7-c</div>
+      <div id="command-dialog-title">{t("externalCommand.title")}</div>
+      <div class="confirm-risk">{t("externalCommand.badge")}</div>
     </header>
     <div id="command-dialog-message" class="confirm-message">
-      Choose a registered command to run with the active local selection.
+      {t("externalCommand.message")}
     </div>
     {#if error}
       <div class="operation-result confirm-result">
-        <div class="result-failed">-: {error}</div>
+        <div class="result-failed">{t("common.error")}: {error}</div>
       </div>
     {/if}
-    <div class="command-options" role="listbox" aria-label="External commands">
+    <div class="command-options" role="listbox" aria-label={t("externalCommand.title")}>
       {#if loading}
         <div class="command-option cursor" role="option" aria-selected="true">
-          <span>Loading...</span>
-          <span>Reading commands.json</span>
+          <span>{t("externalCommand.loading")}</span>
+          <span>{t("externalCommand.readingConfig")}</span>
         </div>
       {:else if commands.length === 0}
         <div class="command-option cursor" role="option" aria-selected="true">
-          <span>No commands</span>
-          <span>commands.json did not contain runnable entries</span>
+          <span>{t("externalCommand.noCommands")}</span>
+          <span>{t("externalCommand.noRunnableEntries")}</span>
         </div>
       {:else}
         {#each commands as command, index (command.id)}
@@ -55,14 +58,14 @@
       {/if}
     </div>
     <div class="confirm-details">
-      <div>source: {sourceKind}</div>
-      <div>targets: {targetCount}</div>
-      <div>config: commands.json</div>
+      <div>{t("common.source")}: {formatPropertySourceKind(sourceKind, t)}</div>
+      <div>{t("common.targets")}: {targetCount}</div>
+      <div>{t("common.config")}: commands.json</div>
     </div>
     <div class="confirm-shortcuts">
-      <span>Run: Enter</span>
-      <span>Move: Up/Down</span>
-      <span>Close: Esc</span>
+      <span>{t("externalCommand.runEnter")}</span>
+      <span>{t("shortcut.moveUpDown")}</span>
+      <span>{t("shortcut.closeEsc")}</span>
     </div>
   </div>
 </div>

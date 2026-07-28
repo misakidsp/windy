@@ -5,6 +5,12 @@ export type TerminalSize = {
   rows: number;
 };
 
+export type TerminalShellKind = "posix" | "powershell" | "cmd" | "unknown";
+
+export function getTerminalShellKind(invoke: TauriInvoke): Promise<TerminalShellKind> {
+  return invokeCommand<TerminalShellKind>(invoke, "get_terminal_shell_kind");
+}
+
 export function resizeTerminal(invoke: TauriInvoke, size: TerminalSize): Promise<void> {
   return invokeCommand<void>(invoke, "resize_terminal", size);
 }

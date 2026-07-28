@@ -1,22 +1,25 @@
 <script lang="ts">
+  import type { Translate } from "./localization";
+
   export let focused = false;
   export let fullscreen = false;
   export let visible = true;
   export let terminalElement: HTMLElement | null = null;
+  export let t: Translate = (id) => id;
 </script>
 
 <section
   class:focused
   class:fullscreen
   class="console-placeholder"
-  aria-label="Console"
+  aria-label={t("terminal.consoleAria")}
   aria-hidden={!visible}
 >
   <div
     bind:this={terminalElement}
     class="console-output"
     role="application"
-    aria-label="PTY terminal"
+    aria-label={t("terminal.ptyAria")}
   ></div>
 </section>
 

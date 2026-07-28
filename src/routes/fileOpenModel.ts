@@ -10,10 +10,10 @@ export type FocusedOpenAction =
 
 export type DefaultAppOpenAction =
   | { type: "openDefaultApp"; entry: FileEntry }
-  | { type: "unsupported"; message: string; commandId: "archive.openDefaultUnsupported" | "remote.openDefaultUnsupported" };
+  | { type: "unsupported"; commandId: "archive.openDefaultUnsupported" | "remote.openDefaultUnsupported" };
 
 export type ViewerOpenAction =
-  | { type: "unsupported"; message: string; commandId: "remote.viewUnsupported" }
+  | { type: "unsupported"; commandId: "remote.viewUnsupported" }
   | { type: "openImageViewer"; entry: FileEntry }
   | { type: "openTextViewer"; entry: FileEntry }
   | { type: "openDefaultApp"; entry: FileEntry };
@@ -58,7 +58,6 @@ export function defaultAppOpenAction(pane: PaneState, entry: FileEntry): Default
   if (pane.source.kind === "archive" || pane.source.kind === "sftp") {
     return {
       type: "unsupported",
-      message: "Opening virtual entries with the OS default app is not implemented yet.",
       commandId: pane.source.kind === "archive" ? "archive.openDefaultUnsupported" : "remote.openDefaultUnsupported",
     };
   }
@@ -76,7 +75,6 @@ export function viewerOpenAction(
   if (pane.source.kind === "sftp") {
     return {
       type: "unsupported",
-      message: "SFTP file viewer is not implemented yet.",
       commandId: "remote.viewUnsupported",
     };
   }

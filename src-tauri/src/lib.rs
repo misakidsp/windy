@@ -85,8 +85,8 @@ use sftp::{
     test_sftp_connection, SftpState,
 };
 use terminal::{
-    resize_terminal, start_sftp_ssh_terminal, start_terminal, stop_terminal, write_terminal,
-    TerminalState,
+    get_terminal_shell_kind, resize_terminal, start_sftp_ssh_terminal, start_terminal,
+    stop_terminal, write_terminal, TerminalState,
 };
 
 use viewer::{read_archive_image_file, read_archive_text_file, read_image_file, read_text_file};
@@ -102,6 +102,8 @@ struct SafeModeStatus {
     active: bool,
     backup_paths: Vec<String>,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -155,6 +157,8 @@ struct DirectoryListing {
     path: String,
     entries: Vec<FileEntry>,
 }
+
+const DIRECTORY_LIST_MAX_ENTRIES: usize = 100_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -270,6 +274,7 @@ fn enter_safe_mode_blocking(label: &str) -> Result<SafeModeStatus, String> {
         backup_paths: backup_paths.into_iter().map(path_to_string).collect(),
         message: "Safe Mode loaded default settings after backing up current config files."
             .to_string(),
+        message_id: Some("preferences.safeModeLoadedDefaults".to_string()),
     })
 }
 
@@ -341,7 +346,13 @@ fn root_directory(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn list_directory(path: String) -> Result<DirectoryListing, String> {
+async fn list_directory(path: String) -> Result<DirectoryListing, String> {
+    tauri::async_runtime::spawn_blocking(move || list_directory_blocking(path))
+        .await
+        .map_err(|error| format!("Directory listing task failed: {error}"))?
+}
+
+fn list_directory_blocking(path: String) -> Result<DirectoryListing, String> {
     let path = PathBuf::from(path);
     let mut entries = Vec::new();
 
@@ -349,6 +360,9 @@ fn list_directory(path: String) -> Result<DirectoryListing, String> {
         fs::read_dir(&path).map_err(|error| format_io_error("read directory", &path, error))?;
 
     for entry in read_dir {
+        if entries.len() >= DIRECTORY_LIST_MAX_ENTRIES {
+            return Err("Directory listing exceeded the 100,000 entry limit.".to_string());
+        }
         let Ok(entry) = entry else {
             continue;
         };
@@ -369,11 +383,15 @@ fn list_directory(path: String) -> Result<DirectoryListing, String> {
 }
 
 #[tauri::command]
-fn list_archive_directory(
+async fn list_archive_directory(
     archive_path: String,
     inner_path: String,
 ) -> Result<ArchiveDirectoryListing, String> {
-    list_archive_directory_blocking(PathBuf::from(archive_path), inner_path)
+    tauri::async_runtime::spawn_blocking(move || {
+        list_archive_directory_blocking(PathBuf::from(archive_path), inner_path)
+    })
+    .await
+    .map_err(|error| format!("Archive listing task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -591,22 +609,60 @@ pub(crate) fn sort_entries(entries: &mut [FileEntry]) {
 }
 
 fn language_file_menu(app: &tauri::AppHandle) -> tauri::Result<Submenu<tauri::Wry>> {
+    let language_settings = load_language_settings().unwrap_or_default();
     Submenu::with_items(
         app,
-        "Language File",
+        language_text(&language_settings, "menu.languageFile").as_str(),
         true,
         &[
-            &tauri::menu::MenuItem::with_id(app, MENU_LANGUAGE_EN, "English", true, None::<&str>)?,
-            &tauri::menu::MenuItem::with_id(app, MENU_LANGUAGE_JA, "Japanese", true, None::<&str>)?,
+            &tauri::menu::MenuItem::with_id(
+                app,
+                MENU_LANGUAGE_EN,
+                language_text(&language_settings, "menu.language.english"),
+                true,
+                None::<&str>,
+            )?,
+            &tauri::menu::MenuItem::with_id(
+                app,
+                MENU_LANGUAGE_JA,
+                language_text(&language_settings, "menu.language.japanese"),
+                true,
+                None::<&str>,
+            )?,
             &tauri::menu::MenuItem::with_id(
                 app,
                 MENU_LANGUAGE_QUENYA,
-                "Quenya Latin",
+                language_text(&language_settings, "menu.language.quenyaLatin"),
                 true,
                 None::<&str>,
             )?,
         ],
     )
+}
+
+fn language_text(settings: &LanguageSettings, id: &str) -> String {
+    settings
+        .messages
+        .get(id)
+        .cloned()
+        .unwrap_or_else(|| default_menu_text(id).unwrap_or(id).to_string())
+}
+
+fn default_menu_text(id: &str) -> Option<&'static str> {
+    match id {
+        "menu.file" => Some("File"),
+        "menu.edit" => Some("Edit"),
+        "menu.view" => Some("View"),
+        "menu.window" => Some("Window"),
+        "menu.help" => Some("Help"),
+        "menu.settings" => Some("Settings"),
+        "menu.preferences" => Some("Preferences..."),
+        "menu.languageFile" => Some("Language File"),
+        "menu.language.english" => Some("English"),
+        "menu.language.japanese" => Some("Japanese"),
+        "menu.language.quenyaLatin" => Some("Quenya Latin"),
+        _ => None,
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -626,6 +682,7 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     };
 
     let language_menu = language_file_menu(app)?;
+    let language_settings = load_language_settings().unwrap_or_default();
 
     Menu::with_items(
         app,
@@ -640,7 +697,7 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                     &tauri::menu::MenuItem::with_id(
                         app,
                         MENU_OPEN_CONFIG_DIRECTORY,
-                        "Preferences...",
+                        language_text(&language_settings, "menu.preferences").as_str(),
                         true,
                         Some("CmdOrCtrl+,"),
                     )?,
@@ -656,7 +713,7 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             )?,
             &Submenu::with_items(
                 app,
-                "Edit",
+                language_text(&language_settings, "menu.edit"),
                 true,
                 &[
                     &PredefinedMenuItem::undo(app, None)?,
@@ -670,13 +727,13 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             )?,
             &Submenu::with_items(
                 app,
-                "View",
+                language_text(&language_settings, "menu.view"),
                 true,
                 &[&PredefinedMenuItem::fullscreen(app, None)?],
             )?,
             &Submenu::with_items(
                 app,
-                "Window",
+                language_text(&language_settings, "menu.window"),
                 true,
                 &[
                     &PredefinedMenuItem::minimize(app, None)?,
@@ -685,7 +742,12 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                     &PredefinedMenuItem::close_window(app, None)?,
                 ],
             )?,
-            &Submenu::with_items(app, "Help", true, &[])?,
+            &Submenu::with_items(
+                app,
+                language_text(&language_settings, "menu.help"),
+                true,
+                &[],
+            )?,
         ],
     )
 }
@@ -693,15 +755,16 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 #[cfg(not(target_os = "macos"))]
 fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let language_menu = language_file_menu(app)?;
+    let language_settings = load_language_settings().unwrap_or_default();
     let settings_menu = Submenu::with_items(
         app,
-        "Settings",
+        language_text(&language_settings, "menu.settings").as_str(),
         true,
         &[
             &tauri::menu::MenuItem::with_id(
                 app,
                 MENU_OPEN_CONFIG_DIRECTORY,
-                "Preferences...",
+                language_text(&language_settings, "menu.preferences").as_str(),
                 true,
                 Some("Ctrl+,"),
             )?,
@@ -715,7 +778,7 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &Submenu::with_items(
                 app,
-                "File",
+                language_text(&language_settings, "menu.file").as_str(),
                 true,
                 &[
                     &PredefinedMenuItem::close_window(app, None)?,
@@ -725,7 +788,7 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &settings_menu,
             &Submenu::with_items(
                 app,
-                "Edit",
+                language_text(&language_settings, "menu.edit").as_str(),
                 true,
                 &[
                     &PredefinedMenuItem::undo(app, None)?,
@@ -737,7 +800,12 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                     &PredefinedMenuItem::select_all(app, None)?,
                 ],
             )?,
-            &Submenu::with_items(app, "Help", true, &[])?,
+            &Submenu::with_items(
+                app,
+                language_text(&language_settings, "menu.help"),
+                true,
+                &[],
+            )?,
         ],
     )
 }
@@ -773,6 +841,7 @@ pub fn run() {
                 active: false,
                 backup_paths: Vec::new(),
                 message: format!("Safe Mode startup failed: {error}"),
+                message_id: None,
             },
         }
     } else {
@@ -836,6 +905,7 @@ pub fn run() {
             read_archive_image_file,
             read_text_file,
             read_archive_text_file,
+            get_terminal_shell_kind,
             start_terminal,
             start_sftp_ssh_terminal,
             write_terminal,
@@ -929,7 +999,7 @@ mod tests {
         fs::write(root.join("b.txt"), "b").unwrap();
         fs::write(root.join("a.txt"), "a").unwrap();
 
-        let listing = list_directory(path_to_string(root)).unwrap();
+        let listing = list_directory_blocking(path_to_string(root)).unwrap();
         let names: Vec<_> = listing
             .entries
             .iter()
@@ -945,7 +1015,7 @@ mod tests {
         let root = root.path();
         fs::write(root.join(".hidden"), "hidden").unwrap();
 
-        let listing = list_directory(path_to_string(root)).unwrap();
+        let listing = list_directory_blocking(path_to_string(root)).unwrap();
         let hidden = listing
             .entries
             .iter()
@@ -2111,6 +2181,108 @@ mod tests {
     }
 
     #[test]
+    fn file_operation_result_item_serializes_localization_metadata() {
+        let item = FileOperationResultItem {
+            path: "/tmp/example.txt".to_string(),
+            message: "Copied to '/tmp/dest/example.txt'.".to_string(),
+        };
+
+        let value = serde_json::to_value(item).context("serialize operation result item");
+        assert_eq!(value["path"], "/tmp/example.txt");
+        assert_eq!(value["message"], "Copied to '/tmp/dest/example.txt'.");
+        assert_eq!(value["messageId"], "operation.resultMessage.copiedTo");
+        assert_eq!(
+            value["messageValues"]["destination"],
+            "/tmp/dest/example.txt"
+        );
+
+        let exact = serde_json::to_value(FileOperationResultItem {
+            path: String::new(),
+            message: "Refresh completed.".to_string(),
+        })
+        .context("serialize exact operation result item");
+        assert_eq!(
+            exact["messageId"],
+            "operation.resultMessage.refreshCompleted"
+        );
+        assert!(exact.get("messageValues").is_none());
+
+        let sftp_busy = serde_json::to_value(FileOperationResultItem {
+            path: String::new(),
+            message: "SFTP connection is busy or unavailable: session-1".to_string(),
+        })
+        .context("serialize dynamic SFTP result item");
+        assert_eq!(
+            sftp_busy["messageId"],
+            "operation.resultMessage.sftpConnectionBusy"
+        );
+        assert_eq!(sftp_busy["messageValues"]["connectionId"], "session-1");
+
+        let exact_input_error = serde_json::to_value(FileOperationResultItem {
+            path: String::new(),
+            message: "Windows attribute expression is not set.".to_string(),
+        })
+        .context("serialize exact input error result item");
+        assert_eq!(
+            exact_input_error["messageId"],
+            "operation.resultMessage.windowsAttributeExpressionNotSet"
+        );
+
+        let sftp_path_error = serde_json::to_value(FileOperationResultItem {
+            path: "/remote/file.txt".to_string(),
+            message: "Rename SFTP entry failed for '/remote/file.txt': denied".to_string(),
+        })
+        .context("serialize SFTP path error result item");
+        assert_eq!(
+            sftp_path_error["messageId"],
+            "operation.resultMessage.renameSftpEntryFailed"
+        );
+        assert_eq!(sftp_path_error["messageValues"]["path"], "/remote/file.txt");
+        assert_eq!(sftp_path_error["messageValues"]["error"], "denied");
+
+        let sftp_transfer_error = serde_json::to_value(FileOperationResultItem {
+            path: "/remote/file.txt".to_string(),
+            message: "Open SFTP file failed for '/remote/file.txt': denied".to_string(),
+        })
+        .context("serialize SFTP transfer error result item");
+        assert_eq!(
+            sftp_transfer_error["messageId"],
+            "operation.resultMessage.openSftpFileFailed"
+        );
+        assert_eq!(
+            sftp_transfer_error["messageValues"]["path"],
+            "/remote/file.txt"
+        );
+        assert_eq!(sftp_transfer_error["messageValues"]["error"], "denied");
+
+        let archive_error = serde_json::to_value(FileOperationResultItem {
+            path: "/tmp/archive.zip".to_string(),
+            message: "Read archive failed: corrupt".to_string(),
+        })
+        .context("serialize archive error result item");
+        assert_eq!(
+            archive_error["messageId"],
+            "operation.resultMessage.readArchiveFailed"
+        );
+        assert_eq!(archive_error["messageValues"]["error"], "corrupt");
+    }
+
+    #[test]
+    fn safe_mode_status_serializes_localization_metadata() {
+        let status = SafeModeStatus {
+            active: true,
+            backup_paths: vec!["/tmp/settings.json".to_string()],
+            message: "Safe Mode loaded default settings after backing up current config files."
+                .to_string(),
+            message_id: Some("preferences.safeModeLoadedDefaults".to_string()),
+        };
+
+        let value = serde_json::to_value(status).context("serialize safe mode status");
+        assert_eq!(value["active"], true);
+        assert_eq!(value["messageId"], "preferences.safeModeLoadedDefaults");
+    }
+
+    #[test]
     fn external_commands_create_defaults_and_validate() {
         let root = temp_dir();
         let path = root.path().join("commands.json");
@@ -2221,7 +2393,7 @@ mod tests {
         fs::write(&target_file, "target").unwrap();
         symlink(&target_file, &link_file).unwrap();
 
-        let listing = list_directory(path_to_string(root)).unwrap();
+        let listing = list_directory_blocking(path_to_string(root)).unwrap();
         let symlink_entry = listing
             .entries
             .iter()
@@ -2359,11 +2531,9 @@ mod tests {
             .unwrap();
         assert_eq!(readme, "readme");
 
-        let listing = list_archive_directory(
-            path_to_string(destination.join("created.tar.gz")),
-            "".to_string(),
-        )
-        .unwrap();
+        let listing =
+            list_archive_directory_blocking(destination.join("created.tar.gz"), "".to_string())
+                .unwrap();
         assert!(listing.entries.iter().any(|entry| entry.name == "source"));
     }
 

@@ -13,6 +13,9 @@ import type {
   FileEntry,
   PaneSourceKind,
 } from "./types";
+import { translateMessage, type Translate } from "./localization";
+
+const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
 
 export function createPane(id: PaneId, title: string): PaneState {
   return {
@@ -41,7 +44,7 @@ export function createLocalSource(path: string): PaneSource {
   return {
     kind: "local",
     location: path,
-    displayName: path || "Local",
+    displayName: path,
   };
 }
 
@@ -85,13 +88,14 @@ export function createDiffSource(
   baseSourceKind: PaneSourceKind,
   basePath: string,
   label: string,
+  t: Translate = fallbackTranslate,
 ): DiffPaneSource {
-  const sideLabel = side === "left" ? "left" : "right";
-  const countLabel = `${entries.length} item${entries.length === 1 ? "" : "s"}`;
+  const sideLabel = t(side === "left" ? "diff.sourceSide.left" : "diff.sourceSide.right");
+  const countLabel = t("diff.sourceCount", { count: entries.length });
   return {
     kind: "diff",
     location: `diff:${sideLabel}:${label}`,
-    displayName: `${sideLabel} diff: ${label} (${countLabel})`,
+    displayName: t("diff.sourceLabel", { side: sideLabel, label, countLabel }),
     baseKind: baseSourceKind,
     basePath,
     returnPath: basePath,
@@ -104,12 +108,13 @@ export function createOperationResultSource(
   entries: FileEntry[],
   returnPath: string,
   operationLabel: string,
+  t: Translate = fallbackTranslate,
 ): OperationResultPaneSource {
-  const countLabel = `${entries.length} failed item${entries.length === 1 ? "" : "s"}`;
+  const countLabel = t("operationResult.sourceCount", { count: entries.length });
   return {
     kind: "operationResult",
     location: `operation-result:${operationLabel}`,
-    displayName: `operation failed: ${operationLabel} (${countLabel})`,
+    displayName: t("operationResult.sourceLabel", { label: operationLabel, countLabel }),
     returnPath,
     operationLabel,
   };
@@ -136,20 +141,20 @@ export function createSftpSource(listing: SftpDirectoryListing, returnPath: stri
   };
 }
 
-export function paneSourceLabel(pane: PaneState): string {
-  if (pane.source.kind === "local") return pane.source.displayName || pane.currentPath || "Local";
+export function paneSourceLabel(pane: PaneState, t: Translate = fallbackTranslate): string {
+  if (pane.source.kind === "local") return pane.source.displayName || pane.currentPath || t("pane.source.localFallback");
   return pane.source.displayName || pane.currentPath;
 }
 
-export function paneHeaderLabel(pane: PaneState): string {
-  const label = paneSourceLabel(pane) || "Loading...";
-  if (pane.source.kind === "local") return `Local: ${label}`;
-  if (pane.source.kind === "sftp") return `SFTP: ${label}`;
-  if (pane.source.kind === "search") return `Search: ${label}`;
-  if (pane.source.kind === "diff") return `Diff: ${label}`;
-  if (pane.source.kind === "operationResult") return `Result: ${label}`;
-  if (pane.source.kind === "gitStatus") return `Git: ${label}`;
-  if (pane.source.kind === "archive") return `Archive: ${baseName(pane.source.archivePath) || label}`;
+export function paneHeaderLabel(pane: PaneState, t: Translate = fallbackTranslate): string {
+  const label = paneSourceLabel(pane, t) || t("pane.source.loading");
+  if (pane.source.kind === "local") return t("pane.header.local", { label });
+  if (pane.source.kind === "sftp") return t("pane.header.sftp", { label });
+  if (pane.source.kind === "search") return t("pane.header.search", { label });
+  if (pane.source.kind === "diff") return t("pane.header.diff", { label });
+  if (pane.source.kind === "operationResult") return t("pane.header.operationResult", { label });
+  if (pane.source.kind === "gitStatus") return t("pane.header.gitStatus", { label });
+  if (pane.source.kind === "archive") return t("pane.header.archive", { label: baseName(pane.source.archivePath) || label });
   return label;
 }
 

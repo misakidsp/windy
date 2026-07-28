@@ -6,7 +6,7 @@ function baseJob(partial: Partial<FileOperationJob>): FileOperationJob {
   return {
     id: "job-1",
     kind: "rename",
-    commandId: "file.renameFocused",
+    commandId: "file.rename",
     label: "Rename focused entry",
     status: "preview",
     risk: "warning",
@@ -71,7 +71,7 @@ assert.equal(renameUndo.redoJob.requestedName, "new.txt");
 const mkdirUndo = createUndoSnapshot(
   baseJob({
     kind: "mkdir",
-    commandId: "file.createDirectory",
+    commandId: "file.mkdir",
     label: "Create directory",
     risk: "safe",
     targets: [],
@@ -101,7 +101,7 @@ assert.equal(createFileUndo.redoJob.kind, "createFile");
 assert.equal(createFileUndo.redoJob.commandId, "redo.createFile");
 
 assert.equal(createUndoSnapshot(baseJob({ commandId: "undo.rename" })), null);
-assert.equal(createUndoSnapshot(baseJob({ kind: "delete", commandId: "file.deleteSelectedPermanently" })), null);
+assert.equal(createUndoSnapshot(baseJob({ kind: "delete", commandId: "file.deletePermanently" })), null);
 
 assert.deepEqual(
   undoSafetyMessages(

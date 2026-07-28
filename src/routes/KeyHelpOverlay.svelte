@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { KeyHelpGroup } from "./keyHelpModel";
+  import type { Translate } from "./localization";
 
   export let groups: KeyHelpGroup[] = [];
+  export let t: Translate = (id) => id;
 
   let scrollContainer: HTMLDivElement | null = null;
 
@@ -11,17 +13,17 @@
   });
 </script>
 
-<div class="key-help-backdrop" aria-label="Key help">
+<div class="key-help-backdrop" aria-label={t("keyHelp.title")}>
   <section class="key-help-panel">
     <header>
       <div>
-        <span class="eyebrow">Key Help</span>
-        <h2>Current bindings</h2>
+        <span class="eyebrow">{t("keyHelp.title")}</span>
+        <h2>{t("keyHelp.currentBindings")}</h2>
       </div>
-      <span class="hint">? / Esc closes</span>
+      <span class="hint">{t("keyHelp.closeHint")}</span>
     </header>
 
-    <div bind:this={scrollContainer} aria-label="Current key bindings" class="group-grid" role="region" tabindex="-1">
+    <div bind:this={scrollContainer} aria-label={t("keyHelp.currentBindings")} class="group-grid" role="region" tabindex="-1">
       {#each groups as group}
         <section class="help-group">
           <h3>{group.title}</h3>
@@ -35,7 +37,7 @@
                 </div>
                 <span class="label">{item.label}</span>
                 {#if item.locked}
-                  <span class="locked">fixed</span>
+                  <span class="locked">{t("keyHelp.fixed")}</span>
                 {/if}
               </div>
             {/each}

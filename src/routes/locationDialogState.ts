@@ -1,5 +1,6 @@
 import { createEmptySftpForm } from "./forms";
 import { sftpFormFromProfile } from "./locationManagerModel";
+import { translateMessage, type Translate } from "./localization";
 import type {
   LocalFavoriteProfile,
   LocationDialogMode,
@@ -26,6 +27,8 @@ export type LocationDialogState = {
 };
 
 export type LocationDialogStatePatch = Partial<LocationDialogState>;
+
+const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
 
 export function openManagerState(): LocationDialogStatePatch {
   return {
@@ -151,10 +154,10 @@ export function armDeleteSearchProfileState(profile: SearchProfile): LocationDia
   };
 }
 
-export function beginSftpConnectState(trustHostKey: boolean): LocationDialogStatePatch {
+export function beginSftpConnectState(trustHostKey: boolean, t: Translate = fallbackTranslate): LocationDialogStatePatch {
   return {
     sftpConnecting: true,
-    sftpConnectionError: trustHostKey ? "trusting host key..." : "",
+    sftpConnectionError: trustHostKey ? t("location.status.trustingHostKey") : "",
     sftpConnectionResult: null,
     pendingKnownHost: trustHostKey ? undefined : null,
   };
@@ -173,10 +176,10 @@ export function acceptSftpConnectSuccessState(
   };
 }
 
-export function acceptKnownHostPromptState(prompt: PendingKnownHost): LocationDialogStatePatch {
+export function acceptKnownHostPromptState(prompt: PendingKnownHost, t: Translate = fallbackTranslate): LocationDialogStatePatch {
   return {
     pendingKnownHost: prompt,
-    sftpConnectionError: "host key is not registered",
+    sftpConnectionError: t("location.status.hostKeyNotRegistered"),
     imeComposing: false,
   };
 }
@@ -196,9 +199,9 @@ export function finishSftpConnectState(): LocationDialogStatePatch {
   };
 }
 
-export function cancelKnownHostState(): LocationDialogStatePatch {
+export function cancelKnownHostState(t: Translate = fallbackTranslate): LocationDialogStatePatch {
   return {
     pendingKnownHost: null,
-    sftpConnectionError: "host key trust canceled",
+    sftpConnectionError: t("location.status.hostKeyTrustCanceled"),
   };
 }

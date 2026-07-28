@@ -198,17 +198,6 @@ function compareDiffEntryPairs(left: DiffEntryPair, right: DiffEntryPair): numbe
   return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
 }
 
-export function diffStatusLabel(status: DiffStatus): string {
-  if (status === "leftOnly") return "left only";
-  if (status === "rightOnly") return "right only";
-  if (status === "kindDifferent") return "kind differs";
-  if (status === "sizeDifferent") return "size differs";
-  if (status === "hashDifferent") return "md5 differs";
-  if (status === "modifiedDifferent") return "modified differs";
-  if (status === "readError") return "read error";
-  return "identical";
-}
-
 function highlightedKeysForDetailedDiff(
   entries: DetailedDiffEntry[],
   leftPane: PaneState,

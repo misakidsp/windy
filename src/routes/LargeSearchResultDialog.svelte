@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { PendingLargeSearchResult } from "./types";
+  import type { Translate } from "./localization";
 
   export let pending: PendingLargeSearchResult;
+  export let t: Translate = (id, values) => values?.count === undefined ? id : id.replace("{count}", String(values.count));
 </script>
 
 <div class="dialog-backdrop" role="presentation">
@@ -13,15 +15,15 @@
     aria-describedby="large-search-message"
   >
     <header class="confirm-dialog-header">
-      <div id="large-search-title">Large Search Result</div>
-      <div class="confirm-risk risk-warning">warning</div>
+      <div id="large-search-title">{t("largeSearch.title")}</div>
+      <div class="confirm-risk risk-warning">{t("largeSearch.warning")}</div>
     </header>
     <div id="large-search-message" class="confirm-message">
-      Search found {pending.listing.entries.length} item(s). Displaying a large virtual source can still feel heavy on this machine.
+      {t("largeSearch.message", { count: pending.listing.entries.length })}
     </div>
     <div class="confirm-shortcuts">
-      <span>Display: Enter</span>
-      <span>Cancel: Esc</span>
+      <span>{t("largeSearch.displayEnter")}</span>
+      <span>{t("shortcut.cancelEsc")}</span>
     </div>
   </div>
 </div>

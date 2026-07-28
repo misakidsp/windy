@@ -78,4 +78,4 @@ assert.deepEqual(failed.entries, []);
 assert.equal(failed.cursorKey, null);
 assert.equal(failed.cursorIndex, -1);
 assert.equal(failed.loading, false);
-assert.equal(failed.error, "Error: not found");
+assert.equal(failed.error, "not found");

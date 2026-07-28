@@ -1,11 +1,24 @@
 <script lang="ts">
   import type { ViewerState } from "./types";
+  import type { Translate } from "./localization";
   import { imageViewerStatus, imageViewerTransform } from "./viewerModel";
 
   export let viewer: ViewerState;
   export let surface: HTMLElement | null = null;
   export let pageSize: number;
   export let onImageLoad: (event: Event) => void;
+  export let t: Translate = (id, values) => {
+    if (!values) return id;
+    return id.replace(/\{([a-zA-Z0-9_.-]+)\}/g, (match, key) => (
+      values[key] === undefined ? match : String(values[key])
+    ));
+  };
+
+  function textViewerSearchStatus(): string {
+    if (viewer.kind !== "text") return "";
+    if (viewer.searchMessageId) return t(viewer.searchMessageId, viewer.searchMessageValues);
+    return viewer.searchMessage;
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -14,7 +27,7 @@
   class={`viewer-surface viewer-${viewer.kind}`}
   role="application"
   tabindex="0"
-  aria-label={`Internal ${viewer.kind} viewer: ${viewer.title}`}
+  aria-label={t("viewer.ariaLabel", { kind: viewer.kind, title: viewer.title })}
 >
   {#if viewer.kind === "text"}
     <div class="viewer-content">
@@ -29,9 +42,9 @@
       <span>
         {viewer.topLine + 1}/{Math.max(viewer.lines.length, 1)} ·
         {viewer.encoding}
-        {viewer.truncated ? " truncated" : ""}
+        {viewer.truncated ? ` ${t("viewer.truncated")}` : ""}
       </span>
-      <span>{viewer.searchMode ? viewer.searchMessage : viewer.searchMessage || "j/k, Space/b, g/G, /, n/N, q"}</span>
+      <span>{viewer.searchMode ? viewer.searchMessage : textViewerSearchStatus() || t("viewer.textHelp")}</span>
     </footer>
   {:else}
     <div class:fit={viewer.fitToWindow} class="image-viewer-content">
@@ -44,8 +57,8 @@
       />
     </div>
     <footer class="viewer-status">
-      <span>{imageViewerStatus(viewer)}</span>
-      <span>+/- zoom, 0 fit, 1 actual, h/j/k/l pan, q</span>
+      <span>{imageViewerStatus(viewer, t)}</span>
+      <span>{t("viewer.imageHelp")}</span>
     </footer>
   {/if}
 </section>

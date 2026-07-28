@@ -34,10 +34,10 @@ Run the development app:
 pnpm tauri dev
 ```
 
-Build:
+Build a release executable with the frontend embedded:
 
 ```sh
-pnpm tauri build
+pnpm run build:app
 ```
 
 Build without producing platform bundles:
@@ -45,6 +45,11 @@ Build without producing platform bundles:
 ```sh
 pnpm tauri build --no-bundle --ci
 ```
+
+Do not use plain `cargo build --release` as a distributable app build. In this
+project it can overwrite `target/release/windy` with a binary that points to the
+development server, resulting in a blank window when launched by itself. Use
+the Tauri CLI commands above for runnable release artifacts.
 
 ## Project Layout
 

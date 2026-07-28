@@ -1,0 +1,45 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      tauri-js:
+        patterns:
+          - "@tauri-apps/*"
+      svelte-vite:
+        patterns:
+          - "@sveltejs/*"
+          - "svelte"
+          - "svelte-check"
+          - "vite"
+      terminal:
+        patterns:
+          - "@xterm/*"
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      tauri-rust:
+        patterns:
+          - "tauri"
+          - "tauri-build"
+      archive:
+        patterns:
+          - "zip"
+          - "tar"
+          - "flate2"
+      sftp:
+        patterns:
+          - "ssh2"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

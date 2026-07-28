@@ -14,6 +14,11 @@ use std::{
 use tar::{Archive, Builder};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
+const EXTRACTION_BUFFER_SIZE: usize = 1024 * 1024;
+const ARCHIVE_LIST_MAX_ENTRIES: usize = 100_000;
+const MAX_EXTRACTED_ENTRIES: usize = 100_000;
+const MAX_EXTRACTED_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+
 struct ArchiveMember {
     name: String,
     is_dir: bool,
@@ -25,6 +30,12 @@ enum ArchiveKind {
     Zip,
     Tar,
     TarGz,
+}
+
+#[derive(Default)]
+struct ExtractionBudget {
+    entries: usize,
+    bytes: u64,
 }
 
 pub(crate) enum CreateArchiveKind {
@@ -60,6 +71,9 @@ fn list_zip_archive_directory_blocking(
         .map_err(|error| format_io_error("open archive", &archive_path, error))?;
     let mut archive =
         ZipArchive::new(file).map_err(|error| format!("Read archive failed: {error}"))?;
+    if archive.len() > ARCHIVE_LIST_MAX_ENTRIES {
+        return Err("Archive listing exceeded the 100,000 entry limit.".to_string());
+    }
     let normalized_inner = normalize_archive_inner_path(&inner_path);
     let mut members = Vec::new();
 
@@ -92,10 +106,14 @@ fn list_tar_archive_directory_blocking(
     let mut archive = open_tar_archive(&archive_path)?;
     let mut members = Vec::new();
 
-    for entry in archive
+    for (index, entry) in archive
         .entries()
         .map_err(|error| format!("Read archive entries failed: {error}"))?
+        .enumerate()
     {
+        if index >= ARCHIVE_LIST_MAX_ENTRIES {
+            return Err("Archive listing exceeded the 100,000 entry limit.".to_string());
+        }
         let Ok(entry) = entry else {
             continue;
         };
@@ -257,6 +275,7 @@ fn archive_entry_display_path(archive_path: &Path, inner_path: &str) -> String {
 pub(crate) fn extract_archive_to_directory(
     archive_path: &Path,
     destination_dir: &Path,
+    cancellation: &Arc<AtomicBool>,
 ) -> Result<PathBuf, String> {
     let kind = archive_kind(archive_path)?;
     if !destination_dir.is_dir() {
@@ -275,11 +294,21 @@ pub(crate) fn extract_archive_to_directory(
         ));
     }
 
+    extraction_cancellation_error(cancellation)?;
+    let mut budget = ExtractionBudget::default();
     let extraction_result = match kind {
-        ArchiveKind::Zip => extract_zip_archive_to_directory(archive_path, &destination_root),
-        ArchiveKind::Tar | ArchiveKind::TarGz => {
-            extract_tar_archive_to_directory(archive_path, &destination_root)
-        }
+        ArchiveKind::Zip => extract_zip_archive_to_directory(
+            archive_path,
+            &destination_root,
+            cancellation,
+            &mut budget,
+        ),
+        ArchiveKind::Tar | ArchiveKind::TarGz => extract_tar_archive_to_directory(
+            archive_path,
+            &destination_root,
+            cancellation,
+            &mut budget,
+        ),
     };
 
     if extraction_result.is_err() && destination_root.exists() {
@@ -287,6 +316,43 @@ pub(crate) fn extract_archive_to_directory(
     }
 
     extraction_result
+}
+
+pub(crate) fn archive_extraction_canceled_message() -> &'static str {
+    "Archive extraction canceled."
+}
+
+fn extraction_cancellation_error(cancellation: &Arc<AtomicBool>) -> Result<(), String> {
+    if cancellation.load(Ordering::SeqCst) {
+        Err(archive_extraction_canceled_message().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+impl ExtractionBudget {
+    fn account_entry(&mut self) -> Result<(), String> {
+        self.entries = self.entries.saturating_add(1);
+        if self.entries > MAX_EXTRACTED_ENTRIES {
+            return Err("Archive extraction exceeded the 100,000 entry limit.".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_declared_size(&self, size: u64) -> Result<(), String> {
+        if self.bytes.saturating_add(size) > MAX_EXTRACTED_BYTES {
+            return Err("Archive extraction exceeded the 64 GiB expanded size limit.".to_string());
+        }
+        Ok(())
+    }
+
+    fn account_bytes(&mut self, size: usize) -> Result<(), String> {
+        self.bytes = self.bytes.saturating_add(size as u64);
+        if self.bytes > MAX_EXTRACTED_BYTES {
+            return Err("Archive extraction exceeded the 64 GiB expanded size limit.".to_string());
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn create_archive_from_sources(
@@ -650,6 +716,8 @@ fn archive_destination_stem(archive_path: &Path) -> Result<String, String> {
 fn extract_zip_archive_to_directory(
     archive_path: &Path,
     destination_root: &Path,
+    cancellation: &Arc<AtomicBool>,
+    budget: &mut ExtractionBudget,
 ) -> Result<PathBuf, String> {
     let archive_file = fs::File::open(archive_path)
         .map_err(|error| format_io_error("open archive", archive_path, error))?;
@@ -659,6 +727,8 @@ fn extract_zip_archive_to_directory(
         .map_err(|error| format_io_error("create extraction directory", destination_root, error))?;
 
     for index in 0..archive.len() {
+        extraction_cancellation_error(cancellation)?;
+        budget.account_entry()?;
         let mut file = archive
             .by_index(index)
             .map_err(|error| format!("Read archive entry failed: {error}"))?;
@@ -667,29 +737,10 @@ fn extract_zip_archive_to_directory(
         };
         let destination = archive_destination_path(destination_root, &enclosed_name)?;
 
-        if file.is_dir() {
-            fs::create_dir_all(&destination).map_err(|error| {
-                format_io_error("create extracted directory", &destination, error)
-            })?;
-            continue;
+        if !file.is_dir() {
+            budget.validate_declared_size(file.size())?;
         }
-
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format_io_error("create extracted parent directory", parent, error)
-            })?;
-        }
-        if destination.exists() {
-            return Err(format!(
-                "Extracted destination already exists: '{}'",
-                destination.display()
-            ));
-        }
-
-        let mut output = fs::File::create(&destination)
-            .map_err(|error| format_io_error("create extracted file", &destination, error))?;
-        io::copy(&mut file, &mut output)
-            .map_err(|error| format_io_error("write extracted file", &destination, error))?;
+        extract_zip_file_entry(&mut file, &destination, cancellation, budget)?;
     }
 
     Ok(destination_root.to_path_buf())
@@ -698,6 +749,8 @@ fn extract_zip_archive_to_directory(
 fn extract_tar_archive_to_directory(
     archive_path: &Path,
     destination_root: &Path,
+    cancellation: &Arc<AtomicBool>,
+    budget: &mut ExtractionBudget,
 ) -> Result<PathBuf, String> {
     fs::create_dir(destination_root)
         .map_err(|error| format_io_error("create extraction directory", destination_root, error))?;
@@ -706,6 +759,8 @@ fn extract_tar_archive_to_directory(
         .entries()
         .map_err(|error| format!("Read archive entries failed: {error}"))?
     {
+        extraction_cancellation_error(cancellation)?;
+        budget.account_entry()?;
         let mut entry = entry.map_err(|error| format!("Read archive entry failed: {error}"))?;
         let path = entry
             .path()
@@ -713,7 +768,10 @@ fn extract_tar_archive_to_directory(
         let safe_relative = safe_archive_relative_path(&path)
             .ok_or_else(|| format!("Archive entry has an unsafe path: '{}'", path.display()))?;
         let destination = archive_destination_path(destination_root, &safe_relative)?;
-        unpack_tar_entry(&mut entry, &destination)?;
+        if entry.header().entry_type().is_file() {
+            budget.validate_declared_size(entry.size())?;
+        }
+        unpack_tar_entry(&mut entry, &destination, cancellation, budget)?;
     }
     Ok(destination_root.to_path_buf())
 }
@@ -722,6 +780,7 @@ pub(crate) fn copy_archive_entry_to_directory(
     archive_path: &Path,
     inner_path: &str,
     destination_dir: &Path,
+    cancellation: &Arc<AtomicBool>,
 ) -> Result<PathBuf, String> {
     if !destination_dir.is_dir() {
         return Err(format!(
@@ -740,20 +799,40 @@ pub(crate) fn copy_archive_entry_to_directory(
         ));
     }
 
-    match archive_kind(archive_path)? {
-        ArchiveKind::Zip => {
-            copy_zip_archive_entry_to_directory(archive_path, &normalized_inner, destination_root)
-        }
-        ArchiveKind::Tar | ArchiveKind::TarGz => {
-            copy_tar_archive_entry_to_directory(archive_path, &normalized_inner, destination_root)
-        }
+    extraction_cancellation_error(cancellation)?;
+    let mut budget = ExtractionBudget::default();
+    let result = match archive_kind(archive_path)? {
+        ArchiveKind::Zip => copy_zip_archive_entry_to_directory(
+            archive_path,
+            &normalized_inner,
+            destination_root.clone(),
+            cancellation,
+            &mut budget,
+        ),
+        ArchiveKind::Tar | ArchiveKind::TarGz => copy_tar_archive_entry_to_directory(
+            archive_path,
+            &normalized_inner,
+            destination_root.clone(),
+            cancellation,
+            &mut budget,
+        ),
+    };
+    if result.is_err() && destination_root.exists() {
+        let _ = if destination_root.is_dir() {
+            fs::remove_dir_all(&destination_root)
+        } else {
+            fs::remove_file(&destination_root)
+        };
     }
+    result
 }
 
 fn copy_zip_archive_entry_to_directory(
     archive_path: &Path,
     normalized_inner: &str,
     destination_root: PathBuf,
+    cancellation: &Arc<AtomicBool>,
+    budget: &mut ExtractionBudget,
 ) -> Result<PathBuf, String> {
     let archive_file = fs::File::open(archive_path)
         .map_err(|error| format_io_error("open archive", archive_path, error))?;
@@ -763,6 +842,8 @@ fn copy_zip_archive_entry_to_directory(
 
     let mut copied = false;
     for index in 0..archive.len() {
+        extraction_cancellation_error(cancellation)?;
+        budget.account_entry()?;
         let mut file = archive
             .by_index(index)
             .map_err(|error| format!("Read archive entry failed: {error}"))?;
@@ -772,7 +853,10 @@ fn copy_zip_archive_entry_to_directory(
         let archive_name = path_to_archive_name(&enclosed_name, file.is_dir());
 
         if archive_name == normalized_inner {
-            extract_zip_file_entry(&mut file, &destination_root)?;
+            if !file.is_dir() {
+                budget.validate_declared_size(file.size())?;
+            }
+            extract_zip_file_entry(&mut file, &destination_root, cancellation, budget)?;
             copied = true;
         } else if archive_name == directory_prefix || archive_name.starts_with(&directory_prefix) {
             let relative = archive_name[directory_prefix.len()..].trim_end_matches('/');
@@ -781,7 +865,10 @@ fn copy_zip_archive_entry_to_directory(
             } else {
                 archive_destination_path(&destination_root, Path::new(relative))?
             };
-            extract_zip_file_entry(&mut file, &destination)?;
+            if !file.is_dir() {
+                budget.validate_declared_size(file.size())?;
+            }
+            extract_zip_file_entry(&mut file, &destination, cancellation, budget)?;
             copied = true;
         }
     }
@@ -801,6 +888,8 @@ fn copy_tar_archive_entry_to_directory(
     archive_path: &Path,
     normalized_inner: &str,
     destination_root: PathBuf,
+    cancellation: &Arc<AtomicBool>,
+    budget: &mut ExtractionBudget,
 ) -> Result<PathBuf, String> {
     let directory_prefix = format!("{}/", normalized_inner.trim_end_matches('/'));
     let mut archive = open_tar_archive(archive_path)?;
@@ -810,6 +899,8 @@ fn copy_tar_archive_entry_to_directory(
         .entries()
         .map_err(|error| format!("Read archive entries failed: {error}"))?
     {
+        extraction_cancellation_error(cancellation)?;
+        budget.account_entry()?;
         let mut entry = entry.map_err(|error| format!("Read archive entry failed: {error}"))?;
         let path = entry
             .path()
@@ -820,7 +911,10 @@ fn copy_tar_archive_entry_to_directory(
         };
 
         if archive_name == normalized_inner {
-            unpack_tar_entry(&mut entry, &destination_root)?;
+            if entry.header().entry_type().is_file() {
+                budget.validate_declared_size(entry.size())?;
+            }
+            unpack_tar_entry(&mut entry, &destination_root, cancellation, budget)?;
             copied = true;
         } else if archive_name.starts_with(&directory_prefix) {
             let relative = archive_name[directory_prefix.len()..].trim_end_matches('/');
@@ -829,7 +923,10 @@ fn copy_tar_archive_entry_to_directory(
             } else {
                 archive_destination_path(&destination_root, Path::new(relative))?
             };
-            unpack_tar_entry(&mut entry, &destination)?;
+            if entry.header().entry_type().is_file() {
+                budget.validate_declared_size(entry.size())?;
+            }
+            unpack_tar_entry(&mut entry, &destination, cancellation, budget)?;
             copied = true;
         }
     }
@@ -956,7 +1053,10 @@ fn read_tar_archive_entry_bytes(
 fn extract_zip_file_entry(
     file: &mut zip::read::ZipFile<'_>,
     destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+    budget: &mut ExtractionBudget,
 ) -> Result<(), String> {
+    extraction_cancellation_error(cancellation)?;
     if file.is_dir() {
         fs::create_dir_all(destination)
             .map_err(|error| format_io_error("create extracted directory", destination, error))?;
@@ -976,8 +1076,7 @@ fn extract_zip_file_entry(
 
     let mut output = fs::File::create(destination)
         .map_err(|error| format_io_error("create extracted file", destination, error))?;
-    io::copy(file, &mut output)
-        .map_err(|error| format_io_error("write extracted file", destination, error))?;
+    copy_extracted_stream(file, &mut output, destination, cancellation, budget)?;
     Ok(())
 }
 
@@ -1004,7 +1103,10 @@ fn archive_destination_path(
 fn unpack_tar_entry<R: Read>(
     entry: &mut tar::Entry<'_, R>,
     destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+    budget: &mut ExtractionBudget,
 ) -> Result<(), String> {
+    extraction_cancellation_error(cancellation)?;
     let entry_type = entry.header().entry_type();
     if entry_type.is_symlink() || entry_type.is_hard_link() {
         return Err("Archive links are not allowed for extraction.".to_string());
@@ -1030,10 +1132,47 @@ fn unpack_tar_entry<R: Read>(
         ));
     }
 
-    entry
-        .unpack(destination)
-        .map(|_| ())
-        .map_err(|error| format_io_error("unpack tar entry", destination, error))
+    let mode = entry.header().mode().ok();
+    let mut output = fs::File::create(destination)
+        .map_err(|error| format_io_error("create extracted file", destination, error))?;
+    copy_extracted_stream(entry, &mut output, destination, cancellation, budget)?;
+    drop(output);
+
+    #[cfg(unix)]
+    if let Some(mode) = mode {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(destination, fs::Permissions::from_mode(mode & 0o777)).map_err(
+            |error| format_io_error("set extracted file permissions", destination, error),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn copy_extracted_stream<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+    budget: &mut ExtractionBudget,
+) -> Result<u64, String> {
+    let mut buffer = vec![0; EXTRACTION_BUFFER_SIZE];
+    let mut copied = 0u64;
+    loop {
+        extraction_cancellation_error(cancellation)?;
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Read archive entry failed: {error}"))?;
+        if read == 0 {
+            return Ok(copied);
+        }
+        budget.account_bytes(read)?;
+        extraction_cancellation_error(cancellation)?;
+        writer
+            .write_all(&buffer[..read])
+            .map_err(|error| format_io_error("write extracted file", destination, error))?;
+        copied += read as u64;
+    }
 }
 
 fn safe_archive_name(path: &Path, is_dir: bool) -> Option<String> {
@@ -1100,5 +1239,30 @@ mod tests {
             archive_destination_path(root, Path::new("docs/readme.txt")).expect("safe path");
 
         assert_eq!(destination, root.join("docs").join("readme.txt"));
+    }
+
+    #[test]
+    fn extraction_honors_cancellation_before_creating_output() {
+        let root = tempfile::tempdir().expect("create temporary directory");
+        let archive = root.path().join("sample.zip");
+        let destination = root.path().join("destination");
+        fs::create_dir(&destination).expect("create destination");
+        let cancellation = Arc::new(AtomicBool::new(true));
+
+        let error = extract_archive_to_directory(&archive, &destination, &cancellation)
+            .expect_err("canceled extraction must fail");
+
+        assert_eq!(error, archive_extraction_canceled_message());
+        assert!(!destination.join("sample").exists());
+    }
+
+    #[test]
+    fn extraction_budget_rejects_too_many_entries() {
+        let mut budget = ExtractionBudget {
+            entries: MAX_EXTRACTED_ENTRIES,
+            bytes: 0,
+        };
+
+        assert!(budget.account_entry().is_err());
     }
 }

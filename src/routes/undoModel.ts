@@ -1,10 +1,13 @@
+import { translateMessage, type Translate } from "./localization";
 import type { FileEntry, FileOperationJob, FileOperationTarget, PaneState, UndoSnapshot } from "./types";
 
-export function createUndoSnapshot(job: FileOperationJob): UndoSnapshot | null {
+const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
+
+export function createUndoSnapshot(job: FileOperationJob, t: Translate = fallbackTranslate): UndoSnapshot | null {
   if (job.commandId.startsWith("undo.")) return null;
-  if (job.kind === "rename") return createRenameUndo(job);
-  if (job.kind === "mkdir") return createCreatedEntryUndo(job, "removeEmptyDirectory", "Undo create directory");
-  if (job.kind === "createFile") return createCreatedEntryUndo(job, "removeEmptyFile", "Undo create file");
+  if (job.kind === "rename") return createRenameUndo(job, t);
+  if (job.kind === "mkdir") return createCreatedEntryUndo(job, "removeEmptyDirectory", t("undo.label.createDirectory"), t);
+  if (job.kind === "createFile") return createCreatedEntryUndo(job, "removeEmptyFile", t("undo.label.createFile"), t);
   return null;
 }
 
@@ -16,7 +19,7 @@ export function undoPaneState(pane: PaneState): Pick<PaneState, "id" | "source" 
   };
 }
 
-export function undoSafetyMessages(snapshot: UndoSnapshot, pane: PaneState): string[] {
+export function undoSafetyMessages(snapshot: UndoSnapshot, pane: PaneState, t: Translate = fallbackTranslate): string[] {
   const job = snapshot.job;
   const messages: string[] = [];
 
@@ -27,21 +30,21 @@ export function undoSafetyMessages(snapshot: UndoSnapshot, pane: PaneState): str
     pane.source.kind !== "gitStatus" &&
     pane.currentPath !== job.sourcePath
   ) {
-    messages.push(`The source pane is now at ${pane.currentPath || "-"}, but this Undo was recorded for ${job.sourcePath || "-"}.`);
+    messages.push(t("undo.safety.sourceMoved", { current: pane.currentPath || "-", recorded: job.sourcePath || "-" }));
   }
 
   if (job.kind === "rename") {
-    messages.push(...renameUndoSafetyMessages(job, pane.entries));
+    messages.push(...renameUndoSafetyMessages(job, pane.entries, t));
   } else if (job.kind === "removeEmptyDirectory") {
-    messages.push(...removeEmptyDirectorySafetyMessages(job, pane.entries));
+    messages.push(...removeEmptyDirectorySafetyMessages(job, pane.entries, t));
   } else if (job.kind === "removeEmptyFile") {
-    messages.push(...removeEmptyFileSafetyMessages(job, pane.entries));
+    messages.push(...removeEmptyFileSafetyMessages(job, pane.entries, t));
   }
 
   return messages;
 }
 
-function createRenameUndo(job: FileOperationJob): UndoSnapshot | null {
+function createRenameUndo(job: FileOperationJob, t: Translate): UndoSnapshot | null {
   const target = job.targets[0];
   const requestedName = job.requestedName?.trim();
   if (!target || !requestedName) return null;
@@ -49,13 +52,13 @@ function createRenameUndo(job: FileOperationJob): UndoSnapshot | null {
   if (!renamedPath) return null;
 
   return {
-    label: `Undo rename ${requestedName} -> ${target.name}`,
-    redoLabel: `Redo rename ${target.name} -> ${requestedName}`,
+    label: t("undo.label.renameStatus", { from: requestedName, to: target.name }),
+    redoLabel: t("undo.label.redoRenameStatus", { from: target.name, to: requestedName }),
     redoJob: {
       ...job,
       id: `redo-${Date.now().toString(36)}`,
       commandId: "redo.rename",
-      label: "Redo rename",
+      label: t("undo.label.redoRename"),
       status: "preview",
       risk: "warning",
       createdAt: new Date().toISOString(),
@@ -65,12 +68,12 @@ function createRenameUndo(job: FileOperationJob): UndoSnapshot | null {
       id: `undo-${Date.now().toString(36)}`,
       kind: "rename",
       commandId: "undo.rename",
-      label: "Undo rename",
+      label: t("undo.label.rename"),
       status: "preview",
       risk: "warning",
       targets: [{ ...target, path: renamedPath, key: renamedPath, name: requestedName }],
-      plannedActions: [`Rename ${renamedPath} back to ${target.name}.`],
-      confirmationMessage: `Undo rename and restore ${target.name}?`,
+      plannedActions: [t("undo.planned.rename", { path: renamedPath, name: target.name })],
+      confirmationMessage: t("undo.confirm.rename", { name: target.name }),
       requestedName: target.name,
       executable: true,
       createdAt: new Date().toISOString(),
@@ -82,6 +85,7 @@ function createCreatedEntryUndo(
   job: FileOperationJob,
   kind: "removeEmptyDirectory" | "removeEmptyFile",
   label: string,
+  t: Translate,
 ): UndoSnapshot | null {
   const requestedName = job.requestedName?.trim();
   if (!requestedName || !job.destinationPath) return null;
@@ -97,13 +101,13 @@ function createCreatedEntryUndo(
   };
 
   return {
-    label: `${label}: ${requestedName}`,
-    redoLabel: kind === "removeEmptyDirectory" ? `Redo create directory: ${requestedName}` : `Redo create file: ${requestedName}`,
+    label: t("undo.label.createdEntryStatus", { label, name: requestedName }),
+    redoLabel: kind === "removeEmptyDirectory" ? t("undo.label.redoCreateDirectoryStatus", { name: requestedName }) : t("undo.label.redoCreateFileStatus", { name: requestedName }),
     redoJob: {
       ...job,
       id: `redo-${Date.now().toString(36)}`,
       commandId: kind === "removeEmptyDirectory" ? "redo.createDirectory" : "redo.createFile",
-      label: kind === "removeEmptyDirectory" ? "Redo create directory" : "Redo create file",
+      label: kind === "removeEmptyDirectory" ? t("undo.label.redoCreateDirectory") : t("undo.label.redoCreateFile"),
       status: "preview",
       risk: "safe",
       createdAt: new Date().toISOString(),
@@ -117,8 +121,8 @@ function createCreatedEntryUndo(
       status: "preview",
       risk: "warning",
       targets: [target],
-      plannedActions: [kind === "removeEmptyDirectory" ? `Remove empty directory ${path}.` : `Remove empty file ${path}.`],
-      confirmationMessage: kind === "removeEmptyDirectory" ? `Remove empty directory ${path}?` : `Remove empty file ${path}?`,
+      plannedActions: [kind === "removeEmptyDirectory" ? t("undo.planned.removeEmptyDirectory", { path }) : t("undo.planned.removeEmptyFile", { path })],
+      confirmationMessage: kind === "removeEmptyDirectory" ? t("undo.confirm.removeEmptyDirectory", { path }) : t("undo.confirm.removeEmptyFile", { path }),
       requestedName: null,
       executable: true,
       createdAt: new Date().toISOString(),
@@ -126,10 +130,10 @@ function createCreatedEntryUndo(
   };
 }
 
-function renameUndoSafetyMessages(job: FileOperationJob, entries: FileEntry[]): string[] {
+function renameUndoSafetyMessages(job: FileOperationJob, entries: FileEntry[], t: Translate): string[] {
   const target = job.targets[0];
   const restoreName = job.requestedName?.trim();
-  if (!target || !restoreName) return ["Undo rename is missing the restore name."];
+  if (!target || !restoreName) return [t("undo.safety.missingRestoreName")];
 
   const currentEntry = findEntryByPath(entries, target.path);
   const restorePath = replaceLeafName(target.path, restoreName);
@@ -137,39 +141,39 @@ function renameUndoSafetyMessages(job: FileOperationJob, entries: FileEntry[]): 
   const messages: string[] = [];
 
   if (!currentEntry) {
-    messages.push(`${target.path} is not visible in the current listing.`);
+    messages.push(t("undo.safety.notVisible", { path: target.path }));
   } else {
     if (target.size !== undefined && currentEntry.size !== target.size) {
-      messages.push(`${target.name} size changed after the original operation.`);
+      messages.push(t("undo.safety.sizeChanged", { name: target.name }));
     }
     if (target.modifiedAt !== undefined && currentEntry.modifiedAt !== target.modifiedAt) {
-      messages.push(`${target.name} modified time changed after the original operation.`);
+      messages.push(t("undo.safety.modifiedChanged", { name: target.name }));
     }
   }
 
   if (restoreEntry && restoreEntry.path !== target.path) {
-    messages.push(`${restoreName} already exists; Undo rename may conflict.`);
+    messages.push(t("undo.safety.restoreExists", { name: restoreName }));
   }
 
   return messages;
 }
 
-function removeEmptyDirectorySafetyMessages(job: FileOperationJob, entries: FileEntry[]): string[] {
+function removeEmptyDirectorySafetyMessages(job: FileOperationJob, entries: FileEntry[], t: Translate): string[] {
   const target = job.targets[0];
-  if (!target) return ["Undo directory removal target is missing."];
+  if (!target) return [t("undo.safety.missingDirectoryTarget")];
   const currentEntry = findEntryByPath(entries, target.path);
-  if (!currentEntry) return [`${target.path} is not visible in the current listing.`];
-  if (currentEntry.kind !== "directory") return [`${target.path} is no longer a directory.`];
+  if (!currentEntry) return [t("undo.safety.notVisible", { path: target.path })];
+  if (currentEntry.kind !== "directory") return [t("undo.safety.notDirectory", { path: target.path })];
   return [];
 }
 
-function removeEmptyFileSafetyMessages(job: FileOperationJob, entries: FileEntry[]): string[] {
+function removeEmptyFileSafetyMessages(job: FileOperationJob, entries: FileEntry[], t: Translate): string[] {
   const target = job.targets[0];
-  if (!target) return ["Undo file removal target is missing."];
+  if (!target) return [t("undo.safety.missingFileTarget")];
   const currentEntry = findEntryByPath(entries, target.path);
-  if (!currentEntry) return [`${target.path} is not visible in the current listing.`];
-  if (currentEntry.kind !== "file") return [`${target.path} is no longer a file.`];
-  if (currentEntry.size !== 0) return [`${target.path} is no longer empty; Undo will not remove it.`];
+  if (!currentEntry) return [t("undo.safety.notVisible", { path: target.path })];
+  if (currentEntry.kind !== "file") return [t("undo.safety.notFile", { path: target.path })];
+  if (currentEntry.size !== 0) return [t("undo.safety.notEmptyFile", { path: target.path })];
   return [];
 }
 

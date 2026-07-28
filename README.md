@@ -24,11 +24,15 @@ file previews, and basic SFTP operations in one Tauri desktop app.
 - Path copy and external command templates
 - SFTP connection profiles and local/SFTP transfer basics
 - Preferences UI for editor, keybinding, appearance, language, reset, and Safe Mode settings
+- Cancellable file transfers and archive extraction with partial-output cleanup
+- Resource limits for large searches, directory listings, and archive expansion
 - macOS, Windows, and Linux oriented codebase
 
 ## Beta Status
 
 This repository is a public beta snapshot of Windy.
+
+Current beta: `v0.2.3-beta.1`.
 
 Known beta caveats:
 
@@ -76,10 +80,10 @@ Run the development app:
 pnpm tauri dev
 ```
 
-Build the app:
+Build a release executable with its frontend embedded:
 
 ```sh
-pnpm tauri build
+pnpm run build:app
 ```
 
 For more contributor-oriented notes, see [Development](docs/DEVELOPMENT.md).
@@ -103,7 +107,7 @@ Windy is designed around the keyboard.
 | `n d` | Create a directory |
 | `n f` | Create an empty file |
 | `ctrl+n` | Open the location manager |
-| `/` | Open quick filter |
+| `up` again at the first row | Open quick filter |
 | `ctrl+f` | Open detailed search |
 | `, c` | Compare local panes recursively with MD5 |
 | `, g` | Open Git changed files |

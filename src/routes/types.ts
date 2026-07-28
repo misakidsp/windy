@@ -102,6 +102,8 @@ export type SafeModeStatus = {
   active: boolean;
   backupPaths: string[];
   message: string;
+  messageId?: string | null;
+  messageValues?: Record<string, string | number> | null;
 };
 
 export type VisibleEntriesCache = {
@@ -339,6 +341,8 @@ export type FileOperationJob = {
 export type FileOperationResultItem = {
   path: string;
   message: string;
+  messageId?: string | null;
+  messageValues?: Record<string, string | number> | null;
 };
 
 export type FileOperationResult = {
@@ -427,6 +431,8 @@ export type SftpConnectionTestResult = {
   displayName: string;
   remotePath: string;
   message: string;
+  messageId?: string | null;
+  messageValues?: Record<string, string | number> | null;
 };
 
 export type PendingKnownHost = {
@@ -500,6 +506,8 @@ export type TextViewerState = {
   searchQuery: string;
   searchMode: boolean;
   searchMessage: string;
+  searchMessageId?: string;
+  searchMessageValues?: Record<string, string | number>;
 };
 
 export type ImageViewerState = {

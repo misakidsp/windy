@@ -1,8 +1,10 @@
 import type { FileOperationKind, PaneId, PrefixKey } from "./types";
 import type { PaneKeyAction, PrefixKeyAction } from "./keyboardModel";
+import { translateMessage } from "./localization";
 
 export type PrefixKeyActionRunner = {
   setStatus(message: string, commandId: string): void;
+  translateStatus?: (id: string, values?: Record<string, string | number>) => string;
   goFirst(): void;
   goLast(): void;
   previewOperation(kind: FileOperationKind): void;
@@ -19,8 +21,9 @@ export async function runPrefixKeyActionWith(
   action: PrefixKeyAction,
   runner: PrefixKeyActionRunner,
 ): Promise<void> {
+  const t = runner.translateStatus ?? ((id: string, values?: Record<string, string | number>) => translateMessage(undefined, id, values));
   if (action.type === "cancel") {
-    runner.setStatus("Prefix canceled.", "prefix.cancel");
+    runner.setStatus(t("prefix.canceled"), "prefix.cancel");
   } else if (action.type === "goFirst") {
     runner.goFirst();
   } else if (action.type === "goLast") {
@@ -46,7 +49,7 @@ export async function runPrefixKeyActionWith(
   } else if (action.type === "copySelectedNames") {
     await runner.copySelectedNamesToClipboard();
   } else {
-    runner.setStatus(`No command for ${action.prefix} ${action.key}.`, "prefix.noMatch");
+    runner.setStatus(t("prefix.noMatch", { prefix: action.prefix, key: action.key }), "prefix.noMatch");
   }
 }
 

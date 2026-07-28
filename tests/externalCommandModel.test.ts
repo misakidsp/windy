@@ -8,6 +8,7 @@ import {
   externalCommandLines,
   selectedCommandTargetsForPane,
   selectedEntriesForPane,
+  ShellQuoteError,
   shellQuotePath,
   type ExternalCommandContext,
 } from "../src/routes/externalCommandModel";
@@ -66,13 +67,18 @@ const context: ExternalCommandContext = {
   otherPane: pane("right", "/dest"),
   activeMarked: [target("marked.md", "/tmp/marked.md")],
   otherMarked: [target("other.log", "/dest/other.log")],
-  isWindows: false,
+  shellKind: "posix",
 };
 
-assert.equal(shellQuotePath("/tmp/quote's.txt", false), "'/tmp/quote'\\''s.txt'");
-assert.equal(shellQuotePath("C:\\temp\\quote's.txt", true), "'C:\\temp\\quote''s.txt'");
-assert.equal(clipboardTextForCommandTargets(targets, false), "'/tmp/a file.txt' '/tmp/quote'\\''s.txt'");
-assert.equal(clipboardNameTextForCommandTargets(targets, false), "'a file.txt' 'quote'\\''s.txt'");
+assert.equal(shellQuotePath("/tmp/quote's.txt", "posix"), "'/tmp/quote'\\''s.txt'");
+assert.equal(shellQuotePath("C:\\temp\\quote's.txt", "powershell"), "'C:\\temp\\quote''s.txt'");
+assert.equal(shellQuotePath("C:\\temp\\a file.txt", "cmd"), "\"C:\\temp\\a file.txt\"");
+assert.throws(
+  () => shellQuotePath("C:\\temp\\%PATH%.txt", "cmd"),
+  (error) => error instanceof ShellQuoteError && error.code === "cmdUnsafePath",
+);
+assert.equal(clipboardTextForCommandTargets(targets, "posix"), "'/tmp/a file.txt' '/tmp/quote'\\''s.txt'");
+assert.equal(clipboardNameTextForCommandTargets(targets, "posix"), "'a file.txt' 'quote'\\''s.txt'");
 assert.equal(clampExternalCommandCursor(-1, 3), 0);
 assert.equal(clampExternalCommandCursor(9, 3), 2);
 assert.equal(clampExternalCommandCursor(0, 0), 0);

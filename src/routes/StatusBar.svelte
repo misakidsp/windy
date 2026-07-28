@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PaneId } from "./types";
+  import type { Translate } from "./localization";
 
   export let activePath = "";
   export let statusMessage = "";
@@ -12,6 +13,7 @@
   export let lastCommandId = "";
   export let lastKey = "";
   export let moveCursorAfterSelection = false;
+  export let t: Translate = (id) => id;
 
   $: consoleState = consoleVisible
     ? terminalFullscreen
@@ -27,12 +29,12 @@
 <footer class="status-bar">
   <span class="status-path" title={activePath}>{activePath || "-"}</span>
   <span class="status-message" title={statusMessage}>{statusMessage}</span>
-  <span>active: {activePaneId}</span>
-  <span>focus: {consoleFocused ? "console" : "pane"}</span>
-  <span>console: {consoleState}</span>
-  <span>command: {lastCommandId}</span>
-  <span>key: {lastKey || "-"}</span>
-  <span>select move: {moveCursorAfterSelection ? "on" : "off"}</span>
+  <span>{t("statusBar.active")}: {activePaneId}</span>
+  <span>{t("statusBar.focus")}: {consoleFocused ? t("statusBar.focusConsole") : t("statusBar.focusPane")}</span>
+  <span>{t("statusBar.console")}: {t(`statusBar.console.${consoleState}`)}</span>
+  <span>{t("statusBar.command")}: {lastCommandId}</span>
+  <span>{t("statusBar.key")}: {lastKey || "-"}</span>
+  <span>{t("statusBar.selectMove")}: {moveCursorAfterSelection ? t("common.on") : t("common.off")}</span>
   <span>Windy</span>
 </footer>
 

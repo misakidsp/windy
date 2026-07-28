@@ -1,8 +1,15 @@
 <script lang="ts">
-  import { diffStatusLabel, type PaneDiffSnapshot } from "./diffModel";
+  import type { PaneDiffSnapshot } from "./diffModel";
+  import type { Translate } from "./localization";
 
   export let snapshot: PaneDiffSnapshot;
   export let listElement: HTMLDivElement | null = null;
+  export let t: Translate = (id, values) => {
+    if (!values) return id;
+    return id.replace(/\{([a-zA-Z0-9_.-]+)\}/g, (match, key) => (
+      values[key] === undefined ? match : String(values[key])
+    ));
+  };
 
   $: changedCount =
     snapshot.counts.leftOnly +
@@ -17,48 +24,48 @@
 <div class="dialog-backdrop" role="presentation">
   <div class="diff-dialog" role="dialog" aria-modal="true" aria-labelledby="diff-title">
     <header class="diff-header">
-      <div id="diff-title">{snapshot.mode === "detailed" ? "Detailed Pane Diff" : "Pane Diff"}</div>
-      <div class="diff-summary">{changedCount} changed / {snapshot.counts.identical} identical</div>
+      <div id="diff-title">{snapshot.mode === "detailed" ? t("diff.detailedTitle") : t("diff.title")}</div>
+      <div class="diff-summary">{t("diff.summary", { changed: changedCount, identical: snapshot.counts.identical })}</div>
     </header>
 
     <div class="diff-sources">
-      <div title={snapshot.leftLabel}>left: {snapshot.leftLabel}</div>
-      <div title={snapshot.rightLabel}>right: {snapshot.rightLabel}</div>
+      <div title={snapshot.leftLabel}>{t("diff.left")}: {snapshot.leftLabel}</div>
+      <div title={snapshot.rightLabel}>{t("diff.right")}: {snapshot.rightLabel}</div>
     </div>
 
     <div class="diff-counts">
-      <span>left only: {snapshot.counts.leftOnly}</span>
-      <span>right only: {snapshot.counts.rightOnly}</span>
-      <span>kind: {snapshot.counts.kindDifferent}</span>
-      <span>size: {snapshot.counts.sizeDifferent}</span>
-      <span>modified: {snapshot.counts.modifiedDifferent}</span>
-      <span>md5: {snapshot.counts.hashDifferent}</span>
-      <span>read error: {snapshot.counts.readError}</span>
+      <span>{t("diff.leftOnly")}: {snapshot.counts.leftOnly}</span>
+      <span>{t("diff.rightOnly")}: {snapshot.counts.rightOnly}</span>
+      <span>{t("diff.kind")}: {snapshot.counts.kindDifferent}</span>
+      <span>{t("diff.size")}: {snapshot.counts.sizeDifferent}</span>
+      <span>{t("diff.modified")}: {snapshot.counts.modifiedDifferent}</span>
+      <span>{t("diff.md5")}: {snapshot.counts.hashDifferent}</span>
+      <span>{t("diff.readError")}: {snapshot.counts.readError}</span>
     </div>
 
     {#if snapshot.mode === "detailed"}
       <div class="diff-options">
-        <span>recursive: {snapshot.recursive ? "on" : "off"}</span>
-        <span>md5: {snapshot.hashFiles ? "on" : "off"}</span>
+        <span>{t("diff.recursive")}: {snapshot.recursive ? t("common.on") : t("common.off")}</span>
+        <span>{t("diff.md5")}: {snapshot.hashFiles ? t("common.on") : t("common.off")}</span>
       </div>
     {/if}
 
-    <div class="diff-list" aria-label="Diff entries" bind:this={listElement}>
+    <div class="diff-list" aria-label={t("diff.entries")} bind:this={listElement}>
       {#each snapshot.entries.filter((entry) => entry.status !== "identical") as entry}
         <div class={`diff-row status-${entry.status}`} title={entry.relativePath}>
-          <span>{diffStatusLabel(entry.status)}</span>
+          <span>{t(`diff.status.${entry.status}`)}</span>
           <span>{entry.relativePath}</span>
         </div>
       {/each}
       {#if changedCount === 0}
-        <div class="diff-empty">No differences</div>
+        <div class="diff-empty">{t("diff.noDifferences")}</div>
       {/if}
     </div>
 
     <div class="diff-shortcuts">
-      <span>Scroll: j/k PgUp/PgDn</span>
-      <span>Show: [ left / ] right</span>
-      <span>Close: Esc</span>
+      <span>{t("diff.scrollShortcut")}</span>
+      <span>{t("shortcut.showLeftRight")}</span>
+      <span>{t("shortcut.closeEsc")}</span>
     </div>
   </div>
 </div>

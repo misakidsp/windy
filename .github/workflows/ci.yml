@@ -72,5 +72,8 @@ jobs:
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Lint Rust backend
+        run: pnpm check:rust
+
       - name: Build Tauri app without bundling
         run: pnpm tauri build --no-bundle --ci

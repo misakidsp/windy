@@ -194,7 +194,7 @@ fn collect_entries(
     cancellation: &Arc<AtomicBool>,
 ) -> Result<BTreeMap<String, DetailedDiffSide>, String> {
     let mut entries = BTreeMap::new();
-    collect_directory_children(
+    let _ = collect_directory_children(
         root,
         root,
         recursive,
@@ -212,11 +212,12 @@ fn collect_directory_children(
     hash_files: bool,
     entries: &mut BTreeMap<String, DetailedDiffSide>,
     cancellation: &Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     check_canceled(cancellation)?;
     let read_dir = fs::read_dir(directory)
         .map_err(|error| format_io_error("read directory for detailed diff", directory, error))?;
 
+    let mut directory_size = 0u64;
     for entry in read_dir {
         check_canceled(cancellation)?;
         let Ok(entry) = entry else {
@@ -227,33 +228,38 @@ fn collect_directory_children(
             Some(relative_path) => relative_path,
             None => continue,
         };
-        let side = detailed_side(&path, recursive, hash_files, cancellation);
+        let side = detailed_side(&path, hash_files, cancellation);
         let should_recurse = recursive
             && side
                 .as_ref()
                 .map(|side| side.kind == EntryKind::Directory && side.error.is_none())
                 .unwrap_or(false);
-        entries.insert(
-            relative_path,
-            side.unwrap_or_else(|error| DetailedDiffSide {
-                kind: EntryKind::Other,
-                size: None,
-                modified_at: None,
-                md5: None,
-                error: Some(error),
-            }),
-        );
+        let mut side = side.unwrap_or_else(|error| DetailedDiffSide {
+            kind: EntryKind::Other,
+            size: None,
+            modified_at: None,
+            md5: None,
+            error: Some(error),
+        });
         if should_recurse {
-            collect_directory_children(root, &path, recursive, hash_files, entries, cancellation)?;
+            side.size = Some(collect_directory_children(
+                root,
+                &path,
+                recursive,
+                hash_files,
+                entries,
+                cancellation,
+            )?);
         }
+        directory_size = directory_size.saturating_add(side.size.unwrap_or(0));
+        entries.insert(relative_path, side);
     }
 
-    Ok(())
+    Ok(directory_size)
 }
 
 fn detailed_side(
     path: &Path,
-    recursive: bool,
     hash_files: bool,
     cancellation: &Arc<AtomicBool>,
 ) -> Result<DetailedDiffSide, String> {
@@ -270,9 +276,7 @@ fn detailed_side(
     } else {
         EntryKind::Other
     };
-    let size = if kind == EntryKind::Directory && recursive {
-        directory_total_size(path, cancellation).ok()
-    } else if kind == EntryKind::Directory {
+    let size = if kind == EntryKind::Directory {
         None
     } else {
         Some(metadata.len())
@@ -295,31 +299,6 @@ fn detailed_side(
         md5,
         error: None,
     })
-}
-
-fn directory_total_size(path: &Path, cancellation: &Arc<AtomicBool>) -> Result<u64, String> {
-    check_canceled(cancellation)?;
-    let mut total = 0_u64;
-    let read_dir =
-        fs::read_dir(path).map_err(|error| format_io_error("read directory size", path, error))?;
-
-    for entry in read_dir {
-        check_canceled(cancellation)?;
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let entry_path = entry.path();
-        let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
-            format_io_error("read metadata for directory size", &entry_path, error)
-        })?;
-        if metadata.file_type().is_dir() {
-            total = total.saturating_add(directory_total_size(&entry_path, cancellation)?);
-        } else {
-            total = total.saturating_add(metadata.len());
-        }
-    }
-
-    Ok(total)
 }
 
 fn md5_file(path: &Path, cancellation: &Arc<AtomicBool>) -> Result<String, String> {
@@ -437,6 +416,13 @@ mod tests {
         assert!(snapshot.entries.iter().any(|entry| {
             entry.relative_path == "only-left.txt" && entry.status == DetailedDiffStatus::LeftOnly
         }));
+        let nested = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == "nested")
+            .expect("nested directory entry");
+        assert_eq!(nested.left.as_ref().and_then(|side| side.size), Some(4));
+        assert_eq!(nested.right.as_ref().and_then(|side| side.size), Some(4));
         assert_eq!(snapshot.counts.hash_different, 1);
         assert_eq!(snapshot.counts.left_only, 1);
     }

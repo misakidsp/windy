@@ -9,6 +9,7 @@ type CreateTerminalOptions = {
   onData: (data: string) => void;
   customKeyHandler: (event: KeyboardEvent) => boolean;
   appearance: AppearanceSettings;
+  initialPrompt: string;
 };
 
 export async function createTerminalInstance({
@@ -16,6 +17,7 @@ export async function createTerminalInstance({
   onData,
   customKeyHandler,
   appearance,
+  initialPrompt,
 }: CreateTerminalOptions): Promise<{ terminal: XtermTerminal; fit: XtermFitAddon }> {
   const [{ Terminal }, { FitAddon }] = await Promise.all([
     import("@xterm/xterm"),
@@ -40,7 +42,7 @@ export async function createTerminalInstance({
   terminal.loadAddon(fit);
   terminal.open(element);
   fit.fit();
-  terminal.writeln("Terminal not started. Press x to focus and start the shell.");
+  terminal.writeln(initialPrompt);
   terminal.onData(onData);
   terminal.attachCustomKeyEventHandler(customKeyHandler);
 

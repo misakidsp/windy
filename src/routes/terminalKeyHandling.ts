@@ -34,6 +34,18 @@ export type TerminalRepeatResult = {
 
 type TerminalShortcutKeyLike = KeyLike & Pick<KeyboardEvent, "type">;
 
+export const terminalKeybindingCommandIds = [
+  "terminal.copyMode",
+  "terminal.scrollPageUp",
+  "terminal.scrollPageDown",
+  "terminal.scrollLineUp",
+  "terminal.scrollLineDown",
+  "terminal.insertActiveSelection",
+  "terminal.toggleVisible",
+  "terminal.toggleFullscreen",
+  "terminal.focusPreviousPane",
+];
+
 export function terminalShortcutAction(
   event: TerminalShortcutKeyLike,
   settings: KeybindSettings = defaultKeybindSettings,

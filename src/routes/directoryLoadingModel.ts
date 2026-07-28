@@ -1,4 +1,5 @@
 import type { FileEntry, PaneId, PaneSource, PaneState } from "./types";
+import { invokeErrorMessage } from "./tauriInvoke";
 
 export function nextLoadGeneration(
   generations: Record<PaneId, number>,
@@ -53,7 +54,7 @@ export function loadedEntriesPatch(
 export function failedEntriesPatch(source: PaneSource, currentPath: string, error: unknown): Partial<PaneState> {
   return {
     loading: false,
-    error: String(error),
+    error: invokeErrorMessage(error),
     source,
     currentPath,
     entries: [],
