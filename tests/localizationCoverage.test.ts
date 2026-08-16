@@ -37,7 +37,7 @@ for (const file of svelteFiles(routesDir)) {
   const source = readFileSync(file, "utf8")
     .replace(/<script\b[\s\S]*?<\/script>/g, "")
     .replace(/<style\b[\s\S]*?<\/style>/g, "");
-  const displayPath = relative(".", file);
+  const displayPath = relative(".", file).replace(/\\/g, "/");
   for (const pattern of literalPatterns) {
     for (const match of source.matchAll(pattern)) {
       const snippet = match[0].replace(/\s+/g, " ").trim();

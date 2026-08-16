@@ -7,9 +7,12 @@ use std::{
     time::UNIX_EPOCH,
 };
 use tauri::{
-    menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu},
+    menu::{Menu, PredefinedMenuItem, Submenu},
     Emitter,
 };
+
+#[cfg(target_os = "macos")]
+use tauri::menu::AboutMetadata;
 
 mod archive;
 mod config;
