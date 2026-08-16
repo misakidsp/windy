@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { handleViewerKey } from "../src/routes/viewerActions";
+import { handleViewerKey, viewerPageSizeForHeight } from "../src/routes/viewerActions";
 import type { TextViewerState } from "../src/routes/types";
 
 function textViewer(patch: Partial<TextViewerState> = {}): TextViewerState {
@@ -18,6 +18,10 @@ function textViewer(patch: Partial<TextViewerState> = {}): TextViewerState {
     ...patch,
   };
 }
+
+assert.equal(viewerPageSizeForHeight(360), 14);
+assert.equal(viewerPageSizeForHeight(800), 36);
+assert.equal(viewerPageSizeForHeight(600), 26);
 
 const entered = handleViewerKey(textViewer(), "/", 10).viewer as TextViewerState;
 const typed = handleViewerKey(entered, "z", 10).viewer as TextViewerState;

@@ -445,6 +445,7 @@
   let imeComposing = false;
   let viewer: ViewerState | null = null;
   let viewerElement: HTMLElement | null = null;
+  let viewerPageSizeValue = 1;
   let consoleVisible = true;
   let consoleFocused = false;
   let consoleCwd = "";
@@ -3135,6 +3136,8 @@
     return viewerPageSizeForElement(viewerElement);
   }
 
+  $: viewerPageSizeValue = viewerPageSizeForElement(viewerElement);
+
   function handleViewerImageLoad(event: Event): void {
     if (!(event.currentTarget instanceof HTMLImageElement)) return;
     viewer = recordImageNaturalSize(viewer, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight);
@@ -4049,7 +4052,7 @@
     <InternalViewer
       viewer={viewer}
       bind:surface={viewerElement}
-      pageSize={viewerPageSize()}
+      pageSize={viewerPageSizeValue}
       onImageLoad={handleViewerImageLoad}
       {t}
     />

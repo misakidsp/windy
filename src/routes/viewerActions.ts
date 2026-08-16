@@ -5,8 +5,12 @@ export type ViewerActionResult = {
   commandId?: string;
 };
 
+export function viewerPageSizeForHeight(height: number): number {
+  return Math.max(1, Math.floor((height - 64) / 20));
+}
+
 export function viewerPageSizeForElement(element: HTMLElement | null): number {
-  return Math.max(1, Math.floor(((element?.clientHeight ?? 360) - 64) / 20));
+  return viewerPageSizeForHeight(element?.clientHeight ?? 360);
 }
 
 function clampTopLine(viewer: TextViewerState, line: number, pageSize: number): number {
