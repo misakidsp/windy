@@ -203,6 +203,8 @@ impl Default for LanguageSettings {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct OperationResultSettings {
+    #[serde(default)]
+    pub(crate) notification_display: NotificationDisplay,
     #[serde(default = "default_operation_result_show_status")]
     pub(crate) show_status: bool,
     #[serde(default = "default_operation_result_show_failure_dialog")]
@@ -213,9 +215,18 @@ pub(crate) struct OperationResultSettings {
     pub(crate) save_failure_log: bool,
 }
 
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum NotificationDisplay {
+    #[default]
+    Details,
+    Status,
+}
+
 impl Default for OperationResultSettings {
     fn default() -> Self {
         Self {
+            notification_display: NotificationDisplay::default(),
             show_status: default_operation_result_show_status(),
             show_failure_dialog: default_operation_result_show_failure_dialog(),
             print_to_terminal: false,
@@ -1234,6 +1245,26 @@ mod tests {
     const JAPANESE_LANGUAGE_JSON: &str = include_str!("../../docs/examples/language.ja.json");
     const QUENYA_LATIN_LANGUAGE_JSON: &str =
         include_str!("../../docs/examples/language.qya-Latn.json");
+
+    #[test]
+    fn notification_display_defaults_and_round_trips() {
+        let legacy: OperationResultSettings =
+            serde_json::from_str(r#"{"printToTerminal":true}"#).unwrap();
+        assert!(matches!(
+            legacy.notification_display,
+            NotificationDisplay::Details
+        ));
+        let compact: OperationResultSettings =
+            serde_json::from_str(r#"{"notificationDisplay":"status"}"#).unwrap();
+        assert!(matches!(
+            compact.notification_display,
+            NotificationDisplay::Status
+        ));
+        assert_eq!(
+            serde_json::to_value(compact).unwrap()["notificationDisplay"],
+            "status"
+        );
+    }
 
     #[test]
     fn bundled_keybind_defaults_parse() {

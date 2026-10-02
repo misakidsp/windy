@@ -40,6 +40,7 @@
   let section: Section = "general";
   let editorCommand = appSettings.externalEditor.command;
   let editorArgs = appSettings.externalEditor.args.join("\n");
+  let notificationDisplay = appSettings.operationResult.notificationDisplay ?? "details";
   let useTrash = appSettings.useTrash;
   let uiFamily = appearanceSettings.fonts.uiFamily;
   let terminalFamily = appearanceSettings.fonts.terminalFamily;
@@ -71,6 +72,7 @@
     editorCommand = appSettings.externalEditor.command;
     editorArgs = appSettings.externalEditor.args.join("\n");
     useTrash = appSettings.useTrash;
+    notificationDisplay = appSettings.operationResult.notificationDisplay ?? "details";
     lastAppSettings = appSettings;
   }
 
@@ -181,6 +183,7 @@
     await onSaveAppSettings({
       ...appSettings,
       useTrash,
+      operationResult: { ...appSettings.operationResult, notificationDisplay, printToTerminal: false },
       externalEditor: {
         command: editorCommand.trim(),
         args: splitArgs(editorArgs),
@@ -304,6 +307,13 @@
             <h2>{t("preferences.general")}</h2>
             <button type="button" onclick={saveGeneral} disabled={loading}>{t("dialog.save")}</button>
           </div>
+          <label>
+            <span>{t("activity.notificationDisplay")}</span>
+            <select bind:value={notificationDisplay}>
+              <option value="details">{t("activity.displayDetails")}</option>
+              <option value="status">{t("activity.displayStatus")}</option>
+            </select>
+          </label>
           <label class="checkbox-row">
             <input type="checkbox" checked={useTrash} onchange={(event) => (useTrash = event.currentTarget.checked)} />
             <span>{t("preferences.useTrash")}</span>

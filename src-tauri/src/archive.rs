@@ -1132,6 +1132,7 @@ fn unpack_tar_entry<R: Read>(
         ));
     }
 
+    #[cfg(unix)]
     let mode = entry.header().mode().ok();
     let mut output = fs::File::create(destination)
         .map_err(|error| format_io_error("create extracted file", destination, error))?;

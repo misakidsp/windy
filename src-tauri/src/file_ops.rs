@@ -537,6 +537,7 @@ fn message_values<const N: usize>(
 
 #[tauri::command]
 pub(crate) async fn execute_file_operation_job(
+    app: tauri::AppHandle,
     state: State<'_, SftpState>,
     cancellation_state: State<'_, OperationCancellationState>,
     job: FileOperationJob,
@@ -552,6 +553,11 @@ pub(crate) async fn execute_file_operation_job(
             }
         };
         let result = tauri::async_runtime::spawn_blocking(move || {
+            let _progress = crate::activity_progress::begin(
+                app,
+                job.id.clone(),
+                Some(job.targets.len()).filter(|count| *count > 0),
+            );
             execute_sftp_file_operation_job_blocking(&operation_state, &job, &cancellation)
         })
         .await
@@ -561,6 +567,11 @@ pub(crate) async fn execute_file_operation_job(
     }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let _progress = crate::activity_progress::begin(
+            app,
+            job.id.clone(),
+            Some(job.targets.len()).filter(|count| *count > 0),
+        );
         execute_file_operation_job_blocking_with_cancellation(job, cancellation)
     })
     .await
@@ -675,6 +686,7 @@ fn copy_stream_with_cancellation<R: Read, W: Write>(
         writer
             .write_all(&buffer[..read])
             .map_err(|error| format!("Write copy stream failed: {error}"))?;
+        crate::activity_progress::bytes(read, false);
         total += read as u64;
     }
     Ok(total)
@@ -799,7 +811,8 @@ fn copy_targets(
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         if cancellation_requested(cancellation, result) {
             break;
         }
@@ -932,7 +945,8 @@ fn copy_sftp_targets_to_local(
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         if cancellation_requested(cancellation, result) {
             break;
         }
@@ -1021,7 +1035,8 @@ fn copy_local_targets_to_sftp(
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         if cancellation_requested(cancellation, result) {
             break;
         }
@@ -1311,7 +1326,8 @@ fn delete_sftp_targets(
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         let Some((target_connection_id, remote_path)) = parse_sftp_uri(&target.path) else {
             result.failed.push(FileOperationResultItem {
                 path: target.path.clone(),
@@ -1619,7 +1635,8 @@ fn chmod_sftp_targets(state: &SftpState, job: &FileOperationJob, result: &mut Fi
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         let Some((target_connection_id, remote_path)) = parse_sftp_uri(&target.path) else {
             result.failed.push(FileOperationResultItem {
                 path: target.path.clone(),
@@ -1873,7 +1890,8 @@ fn move_targets(job: &FileOperationJob, result: &mut FileOperationResult) {
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         let source = PathBuf::from(&target.path);
         match target_destination(&destination_dir, &source)
             .and_then(|destination| move_entry(&source, &destination))
@@ -1952,7 +1970,8 @@ fn chmod_targets(job: &FileOperationJob, result: &mut FileOperationResult) {
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         let path = PathBuf::from(&target.path);
         match set_local_mode(&path, mode) {
             Ok(()) => result.succeeded.push(FileOperationResultItem {
@@ -2003,7 +2022,8 @@ fn windows_attribute_targets(job: &FileOperationJob, result: &mut FileOperationR
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         let path = PathBuf::from(&target.path);
         match set_windows_attributes(&path, patch) {
             Ok(()) => result.succeeded.push(FileOperationResultItem {
@@ -2153,7 +2173,8 @@ fn set_windows_attributes(path: &Path, _patch: WindowsAttributePatch) -> Result<
 }
 
 fn delete_targets(job: &FileOperationJob, result: &mut FileOperationResult) {
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         let path = PathBuf::from(&target.path);
         let operation = if path.is_dir() {
             fs::remove_dir_all(&path)
@@ -2175,7 +2196,8 @@ fn delete_targets(job: &FileOperationJob, result: &mut FileOperationResult) {
 }
 
 fn trash_targets(job: &FileOperationJob, result: &mut FileOperationResult) {
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         let path = PathBuf::from(&target.path);
         match trash::delete(&path) {
             Ok(()) => result.succeeded.push(FileOperationResultItem {
@@ -2354,7 +2376,8 @@ fn extract_archives(
         }
     };
 
-    for target in &job.targets {
+    for (index, target) in job.targets.iter().enumerate() {
+        crate::activity_progress::target(index + 1, &target.path);
         if cancellation_requested(cancellation, result) {
             break;
         }

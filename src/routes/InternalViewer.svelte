@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { viewerPageSizeForElement } from "./viewerActions";
   import type { ViewerState } from "./types";
   import type { Translate } from "./localization";
   import { imageViewerStatus, imageViewerTransform } from "./viewerModel";
@@ -13,6 +14,31 @@
       values[key] === undefined ? match : String(values[key])
     ));
   };
+
+  function measureTextPage(content: HTMLElement) {
+    let frame: number | null = null;
+    const updatePageSize = () => {
+      pageSize = viewerPageSizeForElement(content);
+    };
+    const observer = new ResizeObserver(() => {
+      // Updating the row count resizes the observed rows. Commit outside the
+      // observer delivery to avoid a ResizeObserver notification loop.
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        updatePageSize();
+      });
+    });
+    observer.observe(content);
+    // The rows also resize when inherited font or line-height settings change.
+    const rows = content.firstElementChild;
+    if (rows) observer.observe(rows);
+    updatePageSize();
+    return { destroy: () => {
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    } };
+  }
 
   function textViewerSearchStatus(): string {
     if (viewer.kind !== "text") return "";
@@ -30,13 +56,15 @@
   aria-label={t("viewer.ariaLabel", { kind: viewer.kind, title: viewer.title })}
 >
   {#if viewer.kind === "text"}
-    <div class="viewer-content">
-      {#each viewer.lines.slice(viewer.topLine, viewer.topLine + pageSize) as line, index}
-        <div class="viewer-line">
-          <span class="viewer-line-number">{viewer.topLine + index + 1}</span>
-          <span class="viewer-line-text">{line || " "}</span>
-        </div>
-      {/each}
+    <div class="viewer-content" use:measureTextPage>
+      <div class="viewer-lines">
+        {#each viewer.lines.slice(viewer.topLine, viewer.topLine + pageSize) as line, index}
+          <div class="viewer-line">
+            <span class="viewer-line-number">{viewer.topLine + index + 1}</span>
+            <span class="viewer-line-text">{line || " "}</span>
+          </div>
+        {/each}
+      </div>
     </div>
     <footer class="viewer-status">
       <span>
@@ -79,7 +107,8 @@
     min-height: 0;
     overflow: hidden;
     padding: 4px 0;
-    line-height: 20px;
+    --viewer-line-height: max(20px, calc(var(--windy-viewer-font-size, 12px) * 1.5));
+    line-height: var(--viewer-line-height);
     font-size: var(--windy-viewer-font-size, 12px);
   }
 
@@ -118,7 +147,7 @@
     display: grid;
     grid-template-columns: 64px minmax(0, 1fr);
     min-width: 0;
-    height: 20px;
+    height: var(--viewer-line-height);
   }
 
   .viewer-line-number {

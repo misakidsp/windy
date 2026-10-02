@@ -28,11 +28,13 @@ file previews, and basic SFTP operations in one Tauri desktop app.
 - Resource limits for large searches, directory listings, and archive expansion
 - macOS, Windows, and Linux oriented codebase
 
+- Separate progress/result history with automatic console switching and compact status display
+
 ## Beta Status
 
 This repository is a public beta snapshot of Windy.
 
-Current beta: `v0.2.3-beta.1`.
+Current beta: `v0.2.4-beta.1`.
 
 Known beta caveats:
 

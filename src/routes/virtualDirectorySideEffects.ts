@@ -14,8 +14,8 @@ export function listArchiveDirectory(
   return invokeCommand<ArchiveDirectoryListing>(invoke, "list_archive_directory", { archivePath, innerPath });
 }
 
-export function searchDirectory(invoke: TauriInvoke, request: SearchDirectoryRequest): Promise<SearchDirectoryListing> {
-  return invokeCommand<SearchDirectoryListing>(invoke, "search_directory", { request });
+export function searchDirectory(invoke: TauriInvoke, request: SearchDirectoryRequest, jobId?: string): Promise<SearchDirectoryListing> {
+  return invokeCommand<SearchDirectoryListing>(invoke, "search_directory", { request, ...(jobId ? { jobId } : {}) });
 }
 
 export function listSftpDirectory(

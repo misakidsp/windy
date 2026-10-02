@@ -54,11 +54,16 @@ struct SearchContext<'a> {
 
 #[tauri::command]
 pub(crate) async fn search_directory(
+    app: tauri::AppHandle,
+    job_id: Option<String>,
     request: SearchDirectoryRequest,
 ) -> Result<SearchDirectoryListing, String> {
-    tauri::async_runtime::spawn_blocking(move || search_directory_blocking(request))
-        .await
-        .map_err(|error| format!("Search task failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let _progress = crate::activity_progress::begin(app, job_id, None);
+        search_directory_blocking(request)
+    })
+    .await
+    .map_err(|error| format!("Search task failed: {error}"))?
 }
 
 pub(crate) fn search_directory_blocking(
@@ -174,6 +179,7 @@ fn collect_search_entries(
             continue;
         };
         let path = entry.path();
+        crate::activity_progress::scan(&path);
         let name = entry.file_name().to_string_lossy().to_string();
         let Ok(file_entry) = build_file_entry(path.clone(), name) else {
             continue;

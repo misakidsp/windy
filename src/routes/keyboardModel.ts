@@ -1,3 +1,4 @@
+import { activityCommandIds } from "./activityKeys";
 import type { FileOperationKind, KeybindSettings, PrefixKey } from "./types";
 import keybindingDefaults from "./keybindingDefaults.json" with { type: "json" };
 
@@ -131,6 +132,7 @@ const prefixActions: Record<string, PrefixKeyAction> = {
 };
 
 export const paneKeybindingCommandIds = [
+  ...activityCommandIds,
   ...Object.keys(commandActions),
   ...Object.keys(prefixActions),
 ];

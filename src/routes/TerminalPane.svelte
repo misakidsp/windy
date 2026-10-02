@@ -1,11 +1,14 @@
 <script lang="ts">
+  import ActivityPanel from "./ActivityPanel.svelte";
+  import { activityCounts } from "./activityModel";
+  import type { createActivityState } from "./workspace/activityState.svelte";
   import type { Translate } from "./localization";
-
-  export let focused = false;
-  export let fullscreen = false;
-  export let visible = true;
-  export let terminalElement: HTMLElement | null = null;
-  export let t: Translate = (id) => id;
+  let { activity, focused = false, fullscreen = false, visible = true, terminalElement = $bindable(null), t = (id: string) => id }: {
+    activity: ReturnType<typeof createActivityState>;
+    focused?: boolean; fullscreen?: boolean; visible?: boolean;
+    terminalElement?: HTMLElement | null; t?: Translate;
+  } = $props();
+  const counts = $derived(activityCounts(activity.records));
 </script>
 
 <section
@@ -15,16 +18,27 @@
   aria-label={t("terminal.consoleAria")}
   aria-hidden={!visible}
 >
+  <header>{activity.view === "terminal" ? t("activity.terminal") : t("activity.title")} · {t("activity.counts", counts)} {activity.followLatest ? "" : t("activity.historyPosition")}</header>
+  <div class="content" class:hidden={activity.view !== "terminal"}>
   <div
     bind:this={terminalElement}
     class="console-output"
     role="application"
     aria-label={t("terminal.ptyAria")}
   ></div>
+  </div>
+  <div class="content" class:hidden={activity.view !== "activity"}>
+    <ActivityPanel records={activity.records} selectedId={activity.selectedId} followLatest={activity.followLatest} bind:listElement={activity.listElement} {t} />
+  </div>
 </section>
 
 <style>
+  header { padding: 3px 8px; font-size: 11px; border-bottom: 1px solid var(--windy-pane-border, #444); }
+  .content { min-height: 0; }
+  .hidden { display: none; }
   .console-placeholder {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
     overflow: hidden;
     padding: 0;

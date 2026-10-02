@@ -224,6 +224,7 @@ fn collect_directory_children(
             continue;
         };
         let path = entry.path();
+        crate::activity_progress::scan(&path);
         let relative_path = match relative_path_string(root, &path) {
             Some(relative_path) => relative_path,
             None => continue,
@@ -317,6 +318,7 @@ fn md5_file(path: &Path, cancellation: &Arc<AtomicBool>) -> Result<String, Strin
             break;
         }
         hasher.update(&buffer[..read]);
+        crate::activity_progress::bytes(read, true);
     }
 
     Ok(format!("{:x}", hasher.finalize()))

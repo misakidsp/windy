@@ -33,6 +33,7 @@ export type AppSettings = {
 };
 
 export type OperationResultSettings = {
+  notificationDisplay?: "details" | "status";
   showStatus: boolean;
   showFailureDialog: boolean;
   printToTerminal: boolean;

@@ -15,7 +15,7 @@ export type KeyHelpGroup = {
   items: KeyHelpItem[];
 };
 
-const groupOrder = ["pane", "entry", "file", "view", "filter", "diff", "git", "clipboard", "terminal", "location", "search", "external", "dialog", "help", "app", "archive", "selection", "cursor"];
+const groupOrder = ["activity", "pane", "entry", "file", "view", "filter", "diff", "git", "clipboard", "terminal", "location", "search", "external", "dialog", "help", "app", "archive", "selection", "cursor"];
 
 const implicitHelpBindings: Record<string, string[]> = {};
 
