@@ -19,9 +19,26 @@ function textViewer(patch: Partial<TextViewerState> = {}): TextViewerState {
   };
 }
 
-assert.equal(viewerPageSizeForHeight(360), 14);
-assert.equal(viewerPageSizeForHeight(800), 36);
-assert.equal(viewerPageSizeForHeight(600), 26);
+assert.equal(viewerPageSizeForHeight(326, 20), 16);
+assert.equal(viewerPageSizeForHeight(766, 20), 38);
+assert.equal(viewerPageSizeForHeight(566, 20), 28);
+assert.equal(viewerPageSizeForHeight(566, 30), 18);
+assert.equal(viewerPageSizeForHeight(566, 22.5), 25);
+assert.equal(viewerPageSizeForHeight(0, 20), 1);
+assert.equal(viewerPageSizeForHeight(-8, 20), 1);
+assert.equal(viewerPageSizeForHeight(566, 0), 1);
+assert.equal(viewerPageSizeForHeight(566, NaN), 1);
+
+const longViewer = textViewer({ lines: Array.from({ length: 100 }, (_, i) => String(i)) });
+for (const lineHeight of [20, 30]) {
+  const pageSize = viewerPageSizeForHeight(566, lineHeight);
+  const down = handleViewerKey(longViewer, "PageDown", pageSize).viewer as TextViewerState;
+  assert.equal(down.topLine, pageSize);
+  const up = handleViewerKey(down, "PageUp", pageSize).viewer as TextViewerState;
+  assert.equal(up.topLine, 0);
+  const bottom = handleViewerKey(longViewer, "G", pageSize).viewer as TextViewerState;
+  assert.equal(bottom.topLine, 100 - pageSize);
+}
 
 const entered = handleViewerKey(textViewer(), "/", 10).viewer as TextViewerState;
 const typed = handleViewerKey(entered, "z", 10).viewer as TextViewerState;

@@ -2,7 +2,7 @@
 
 Windy is currently published as a beta application.
 
-Current release: `v0.2.3-beta.1`.
+Current release: `v0.2.4-beta.1`.
 
 The beta is intended for people who are comfortable with keyboard-driven file
 managers and can tolerate rough edges while the app is still stabilizing.

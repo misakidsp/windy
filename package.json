@@ -1,6 +1,6 @@
 {
   "name": "windy",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Keyboard-first dual-pane file manager prototype.",
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:app": "tauri build --no-bundle --ci",
     "test": "node --experimental-strip-types --import ./scripts/register-ts-test-loader.mjs scripts/run-ts-tests.mjs",
+    "test:browser": "vite --config tests/workspace.vite.config.ts --open /tests/workspaceSmoke.html",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",

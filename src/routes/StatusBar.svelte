@@ -1,4 +1,9 @@
 <script lang="ts">
+  import { activityCounts, activityRunning, type ActivityRecord } from "./activityModel";
+  export let activityRecords: ActivityRecord[] = [];
+  $: counts = activityCounts(activityRecords);
+  $: currentActivity = activityRecords.find(activityRunning);
+  $: progress = currentActivity?.progress;
   import type { PaneId } from "./types";
   import type { Translate } from "./localization";
 
@@ -29,6 +34,12 @@
 <footer class="status-bar">
   <span class="status-path" title={activePath}>{activePath || "-"}</span>
   <span class="status-message" title={statusMessage}>{statusMessage}</span>
+  {#if activityRecords.length}
+    <span class="activity-summary" aria-live="polite" title={currentActivity ? t(currentActivity.label.id, currentActivity.label.values) : undefined}>
+      {t("activity.counts", counts)}
+      {#if progress} · {progress.total === null ? t("activity.scanned", { count: progress.items }) : t("activity.items", { current: progress.items, total: progress.total })}{/if}
+    </span>
+  {/if}
   <span>{t("statusBar.active")}: {activePaneId}</span>
   <span>{t("statusBar.focus")}: {consoleFocused ? t("statusBar.focusConsole") : t("statusBar.focusPane")}</span>
   <span>{t("statusBar.console")}: {t(`statusBar.console.${consoleState}`)}</span>

@@ -338,3 +338,11 @@ Common external command placeholders include:
 The generated sample external commands are intentionally conservative. When
 editing these files by hand, close Windy first or reload the relevant view after
 editing.
+
+## Progress, results, and console
+
+Preferences lets you choose detailed activity in the lower panel (default) or compact counts in the status bar. Starting work from a pane reveals activity; focusing the console restores the terminal. Notifications never replace a focused console, and the terminal retains its input and output history.
+
+With pane focus, use Alt+T to switch displays, Alt+Up/Down and Alt+PageUp/PageDown to browse history, Alt+End to follow the latest entry, and Alt+Enter to open result details. Incoming results preserve your position while browsing history. Single-operation results, including settings saves and connections, use the same history. History is kept for the current session, normally up to 200 entries, and is translated again when the language changes.
+
+Completion does not automatically open a result dialog. Differences found by detailed comparison are successful results; read errors need attention. Cancellation requests remain distinct from confirmed cancellation, and completed changes are retained. Legacy showStatus / showFailureDialog / printToTerminal settings are accepted for compatibility. Notifications are never written to terminal output; saveFailureLog remains supported.

@@ -5,12 +5,16 @@ export type ViewerActionResult = {
   commandId?: string;
 };
 
-export function viewerPageSizeForHeight(height: number): number {
-  return Math.max(1, Math.floor((height - 64) / 20));
+// Height is the usable text area, excluding the status bar and content padding.
+export function viewerPageSizeForHeight(height: number, lineHeight: number): number {
+  if (!Number.isFinite(height) || !Number.isFinite(lineHeight) || lineHeight <= 0) return 1;
+  return Math.max(1, Math.floor(height / lineHeight));
 }
 
-export function viewerPageSizeForElement(element: HTMLElement | null): number {
-  return viewerPageSizeForHeight(element?.clientHeight ?? 360);
+export function viewerPageSizeForElement(element: HTMLElement): number {
+  const style = getComputedStyle(element);
+  const height = element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  return viewerPageSizeForHeight(height, parseFloat(style.lineHeight));
 }
 
 function clampTopLine(viewer: TextViewerState, line: number, pageSize: number): number {

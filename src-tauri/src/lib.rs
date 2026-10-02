@@ -1,3 +1,4 @@
+mod activity_progress;
 use serde::Serialize;
 use std::{
     env, fs, io,
@@ -408,6 +409,7 @@ async fn list_git_status_directory(path: String) -> Result<GitStatusListing, Str
 
 #[tauri::command]
 async fn compare_local_directories_detailed(
+    app: tauri::AppHandle,
     cancellation_state: tauri::State<'_, DetailedDiffCancellationState>,
     job_id: Option<String>,
     left_path: String,
@@ -418,6 +420,7 @@ async fn compare_local_directories_detailed(
     let cancellation = cancellation_state.register(job_id.as_deref());
     let cleanup_job_id = job_id.clone();
     let result = match tauri::async_runtime::spawn_blocking(move || {
+        let _progress = activity_progress::begin(app, job_id, None);
         compare_local_directories_detailed_blocking_with_cancellation(
             PathBuf::from(left_path),
             PathBuf::from(right_path),
