@@ -194,6 +194,7 @@ Windy は必要になったタイミングで設定ファイルを作成しま�
   "schemaVersion": 1,
   "useTrash": true,
   "operationResult": {
+    "notificationDisplay": "details",
     "showStatus": true,
     "showFailureDialog": true,
     "printToTerminal": false,

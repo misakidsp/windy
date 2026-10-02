@@ -1,6 +1,9 @@
 name: Windows release artifacts
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-release.yml"
   workflow_dispatch:
 
 permissions:

@@ -223,6 +223,7 @@ Example `settings/operation.json`:
   "schemaVersion": 1,
   "useTrash": true,
   "operationResult": {
+    "notificationDisplay": "details",
     "showStatus": true,
     "showFailureDialog": true,
     "printToTerminal": false,
