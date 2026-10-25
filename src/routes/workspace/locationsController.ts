@@ -34,6 +34,7 @@ import {
   type LocationDialogStatePatch,
 } from "../locationDialogState";
 import {
+  cancelSftpHostKeyConfirmation,
   deleteLocalFavoriteProfile,
   deleteSearchProfile,
   deleteSftpConnectionProfile,
@@ -182,7 +183,17 @@ export function createLocationsController(state: Pick<WorkspaceState, "activity"
     state.app.lastCommandId = "location.openManager";
   }
 
+  async function cancelPendingKnownHost(token: string): Promise<void> {
+    try {
+      await cancelSftpHostKeyConfirmation(invoke, token);
+    } catch (error) {
+      state.app.notify("location.sftpConnectionFailed", { error: actions.localizedBackendError(error) }, "failed", false);
+    }
+  }
+
   function closeSftpConnectionDialog(): void {
+    const pending = state.locations.pendingKnownHost;
+    if (pending) void cancelPendingKnownHost(pending.token);
     applyLocationDialogStatePatch(closeManagerState(state.locations.sftpForm));
     state.app.lastCommandId = "remote.connectionDialog.close";
     actions.focusActivePaneAfterDialog();
@@ -567,6 +578,8 @@ export function createLocationsController(state: Pick<WorkspaceState, "activity"
 
   async function testSftpConnectionFromDialog(trustHostKey = false): Promise<void> {
     if (state.locations.sftpConnecting) return;
+    const approval = trustHostKey ? state.locations.pendingKnownHost : null;
+    if (trustHostKey && !approval) return;
     const validationMessage = validateSftpConnectionForm(state.locations.sftpForm, state.settings.t);
     if (validationMessage) {
       state.locations.sftpConnectionError = validationMessage;
@@ -578,7 +591,7 @@ export function createLocationsController(state: Pick<WorkspaceState, "activity"
     applyLocationDialogStatePatch(beginSftpConnectState(trustHostKey, state.settings.t));
     state.app.lastCommandId = "remote.connectSftp";
     try {
-      const result = await testSftpConnection(invoke, state.locations.sftpForm, trustHostKey);
+      const result = await testSftpConnection(invoke, state.locations.sftpForm, approval);
       applyLocationDialogStatePatch({
         sftpConnectionResult: result,
         pendingKnownHost: null,
@@ -625,7 +638,9 @@ export function createLocationsController(state: Pick<WorkspaceState, "activity"
       applyLocationDialogStatePatch(clearPendingDeletesState());
       state.app.lastCommandId = "location.deleteCancel";
     } else if (action.type === "escapeCancelKnownHost") {
+      const pending = state.locations.pendingKnownHost;
       applyLocationDialogStatePatch(cancelKnownHostState(state.settings.t));
+      if (pending) await cancelPendingKnownHost(pending.token);
       state.app.lastCommandId = "remote.connectSftp.knownHostCancel";
     } else if (action.type === "backToManager") {
       returnToLocationManager();

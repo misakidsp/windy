@@ -43,7 +43,7 @@ export function mountWorkspace(state: WorkspaceState, actions: WorkspaceActions)
     void actions.openPreferencesDialog();
   }).then(retainListener);
   applyAppearanceToRoot(document.documentElement, state.settings.appearanceSettings);
-  void actions.loadAppSettings();
+  void actions.loadAppSettings().then(() => actions.loadRecoveryHistory());
   void actions.loadAppearanceSettings();
   void actions.loadKeybindSettings();
   void actions.loadLanguageSettings();

@@ -68,6 +68,7 @@ const searchProfile: SearchProfile = {
   readonlyMode: "any",
 };
 const knownHost: PendingKnownHost = {
+  token: "host-key-1",
   host: "example.test",
   port: 22,
   fingerprint: "SHA256:abc",

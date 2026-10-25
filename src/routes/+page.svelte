@@ -198,6 +198,8 @@
       }}
       onOpenConfigDirectory={actions.openPreferencesConfigDirectory}
       onSaveAppSettings={actions.savePreferencesAppSettings}
+      onRecoveryRestore={actions.previewRecoveryRecord}
+      onRecoveryChanged={actions.loadRecoveryHistory}
       onSaveAppearanceSettings={actions.savePreferencesAppearanceSettings}
       onSaveKeybindSettings={actions.savePreferencesKeybindSettings}
       onApplyLanguagePreset={actions.applyPreferencesLanguagePreset}
@@ -220,6 +222,7 @@
       targetSummary={targetSummary(state.operations.operationJob, state.settings.t)}
       showPaths={shouldShowOperationPaths(state.operations.operationJob)}
       nameRequired={operationNameRequired(state.operations.operationJob)}
+      nameReadonly={!!state.operations.activeUndoSnapshot || !!state.operations.activeRedoSnapshot}
       previewLimit={operationTargetPreviewLimit(state.operations.operationJob)}
       conflictMessages={actions.operationConflictMessages(state.operations.operationJob)}
       safetyMessages={actions.operationSafetyMessages(state.operations.operationJob)}

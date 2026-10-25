@@ -156,11 +156,11 @@ export function targetVariables(target: CommandTarget, index: number, shellKind:
 }
 
 export function replaceTemplateVariables(template: string, variables: Record<string, string>): string {
-  let line = template;
-  for (const [key, value] of Object.entries(variables)) {
-    line = line.replaceAll(`{${key}}`, value);
-  }
-  return line;
+  // Scan only the original template. Values are literal data, even when they
+  // contain replacement syntax or another template variable.
+  return template.replace(/\{([^{}]+)\}/g, (placeholder, key: string) =>
+    Object.hasOwn(variables, key) ? variables[key] : placeholder,
+  );
 }
 
 function shellQuoteLiteral(value: string, shellKind: TerminalShellKind): string {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { executeFileOperationJob } from "../src/routes/operationSideEffects";
+import { executeFileOperationJob, cancelFileOperationJob, fileOperationCanCancel } from "../src/routes/operationSideEffects";
 import type { FileOperationJob } from "../src/routes/types";
 import { createTauriInvokeMock, type InvokeCall } from "./tauriInvokeMock";
 
@@ -23,6 +23,15 @@ const job: FileOperationJob = {
 };
 
 const calls: InvokeCall[] = [];
+for (const kind of ["delete", "trash", "move", "rename", "chmod", "windowsAttributes", "mkdir", "createFile", "removeEmptyDirectory", "removeEmptyFile", "refresh"] as const) {
+  assert.equal(fileOperationCanCancel({ ...job, kind }), false, kind);
+}
+for (const kind of ["copy", "extractArchive", "createArchive"] as const) {
+  assert.equal(fileOperationCanCancel({ ...job, kind }), true, kind);
+}
+assert.equal(fileOperationCanCancel({ ...job, kind: "rename", recoveryId: "receipt" }), true);
+assert.equal(fileOperationCanCancel({ ...job, kind: "delete", destinationPath: "sftp://conn/tmp" }), false);
+assert.equal(fileOperationCanCancel({ ...job, destinationPath: "sftp://conn/tmp" }), true);
 const invoke = createTauriInvokeMock(calls, () => ({
   succeeded: [{ path: "/tmp/a.txt", message: "copied" }],
   failed: [],
@@ -32,6 +41,10 @@ async function run(): Promise<void> {
   const result = await executeFileOperationJob(invoke, job);
   assert.equal(result.succeeded[0]?.path, "/tmp/a.txt");
   assert.deepEqual(calls, [{ command: "execute_file_operation_job", args: { job } }]);
+  for (const status of ["accepted", "unsupported", "notRunning"] as const) {
+    const cancelInvoke = createTauriInvokeMock([], () => status);
+    assert.equal(await cancelFileOperationJob(cancelInvoke, job.id), status);
+  }
 }
 
 run().catch((error: unknown) => {

@@ -2,7 +2,7 @@
 
 Windy is currently published as a beta application.
 
-Current release: `v0.2.4-beta.1`.
+Current release: `v0.2.5-beta.1`.
 
 The beta is intended for people who are comfortable with keyboard-driven file
 managers and can tolerate rough edges while the app is still stabilizing.
@@ -15,14 +15,27 @@ managers and can tolerate rough edges while the app is still stabilizing.
 - Local `d` / `delete` uses the operating system trash where supported.
 - `shift+delete` permanently deletes local files.
 - SFTP delete is permanent because remote trash is not generally available.
-- Undo/redo is intentionally limited to selected safe operations.
+- Basic Undo/Redo supports rename and empty file/directory creation. Optional
+  local recovery protection extends this to copy, same-filesystem move, archive
+  creation/extraction, and permission/attribute changes. It is disabled by default.
+- Permanent delete and OS trash operations are recorded but cannot be restored
+  by Windy. SFTP is outside recovery protection.
+- Recovery history defaults to 20 operations (configurable from 1 to 1,000).
+  Retained data and interrupted records are not automatically deleted, so the
+  history count is not a disk-space limit.
 - Preferences includes reset actions. Reset backs up current settings under the
   app configuration directory before restoring defaults.
 - Safe Mode backs up the current main settings and starts with default general,
   appearance, keybinding, and language settings. Use it when a broken setting
   prevents normal startup.
-- Copy, SFTP transfer, and archive extraction check cancellation between entries
-  and file chunks and remove incomplete output where possible.
+- Copy, archive creation/extraction, SFTP copy, and recorded recovery Undo/Redo
+  support cancellation at safe boundaries. Delete, trash, move, rename,
+  permission changes, and new file/directory creation do not support cancellation.
+- Failed or canceled directory copies can retain partial data in a dedicated
+  staging directory. Results report the location for inspection and manual cleanup.
+  Transfer/archive finalization rejects unexpected destination collisions.
+- Local copies preserve file permissions (including Unix executable bits and
+  Windows read-only attributes); owner, ACL, and extended attributes are not preserved.
 - Archive extraction accepts regular files and directories only and applies
   entry-count and expanded-size limits.
 - Search and directory/archive listings have explicit result limits to avoid

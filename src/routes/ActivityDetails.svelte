@@ -12,6 +12,7 @@
     <p>{t(`activity.${record.status}`)} · {t(record.message.id, record.message.values)}</p>
     {#if record.result?.kind === "operation"}
       <div class="results" bind:this={element}>
+        {#if record.result.result.recoveryStatus}<p>{t("recovery.resultStatus", { status: t(`recovery.state.${record.result.result.recoveryStatus}`) })}</p>{/if}
         {#if record.result.snapshot.logPath}<p>{t("common.log")}: {record.result.snapshot.logPath}</p>{/if}
         {#each record.result.result.failed as item}<p>{t("activity.failed")}: {item.path} — {operationResultItemMessage(item, t)}</p>{/each}
         {#each record.result.result.succeeded as item}<p>{t("activity.completed")}: {item.path} — {operationResultItemMessage(item, t)}</p>{/each}

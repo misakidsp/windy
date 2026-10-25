@@ -35,6 +35,7 @@ const exactOperationMessages: Record<string, string> = {
   "Directory created.": "operation.resultMessage.directoryCreated",
   "File created.": "operation.resultMessage.fileCreated",
   "Removed empty directory.": "operation.resultMessage.emptyDirectoryRemoved",
+  "Undo/Redo target changed since it was recorded.": "operation.resultMessage.historyTargetChanged",
   "Undo can remove only an empty file.": "operation.resultMessage.undoRequiresEmptyFile",
   "Removed empty file.": "operation.resultMessage.emptyFileRemoved",
   "No archive sources were resolved.": "operation.resultMessage.noArchiveSources",
@@ -65,6 +66,7 @@ const exactOperationMessages: Record<string, string> = {
   "SFTP connection state is unavailable.": "operation.resultMessage.sftpConnectionStateUnavailable",
   "SSH server host key type is unknown.": "operation.resultMessage.sshHostKeyUnknown",
   "SSH server host key is unavailable.": "operation.resultMessage.sshHostKeyUnavailable",
+  "SSH host key approval is stale or does not match this connection. Connect again to confirm the current key.": "operation.resultMessage.sshHostKeyApprovalInvalid",
   "Terminal is not running.": "operation.resultMessage.terminalNotRunning",
   "Terminal state lock poisoned.": "operation.resultMessage.terminalStateLockPoisoned",
   "Safe Mode state lock failed.": "operation.resultMessage.safeModeStateLockFailed",
@@ -112,6 +114,7 @@ const operationErrorActionIds: Record<string, string> = {
   "Create SSH session": "operation.errorAction.createSshSession",
   "create archive": "operation.errorAction.createArchive",
   "create copy destination": "operation.errorAction.createCopyDestination",
+  "set copy permissions": "operation.errorAction.setCopyPermissions",
   "create directory": "operation.errorAction.createDirectory",
   "create directory symlink": "operation.errorAction.createDirectorySymlink",
   "create download directory": "operation.errorAction.createDownloadDirectory",
@@ -213,6 +216,8 @@ const operationErrorActionIds: Record<string, string> = {
   "Write terminal": "operation.errorAction.writeTerminal",
   "write archive source": "operation.errorAction.writeArchiveSource",
   "write extracted file": "operation.errorAction.writeExtractedFile",
+  "create copy staging directory": "operation.errorAction.createCopyStagingDirectory",
+  "publish copied directory": "operation.errorAction.publishCopiedDirectory",
   "Write copy stream": "operation.errorAction.writeCopyStream",
   "Write SFTP file": "operation.errorAction.writeSftpFile",
 };
@@ -225,6 +230,8 @@ function operationErrorActionLabel(action: string, t: Translate): string {
 }
 
 function translateLegacyOperationMessage(message: string, t: Translate): string | null {
+  const retained = message.match(/^([\s\S]*)\nIncomplete output retained at '([\s\S]+)'\.$/);
+  if (retained) return `${translateLegacyOperationMessage(retained[1], t) ?? retained[1]}\n${t("operation.resultMessage.retainedOutput", { path: retained[2] })}`;
   const exactId = exactOperationMessages[message];
   if (exactId) {
     const translated = t(exactId);
@@ -374,6 +381,7 @@ export function operationResultStatus(label: string, result: FileOperationResult
 }
 
 export function operationResultItemMessage(item: FileOperationResultItem, t: Translate = fallbackTranslate): string {
+  if (item.message.startsWith("recovery.")) return t(item.message);
   if (item.messageId) {
     const translated = t(item.messageId, item.messageValues ?? {});
     if (translated !== item.messageId) return translated;

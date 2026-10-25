@@ -14,7 +14,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::State;
 use zeroize::Zeroizing;
@@ -35,7 +35,103 @@ pub(crate) struct SftpConnectionRequest {
     pub(crate) private_key_path: Option<String>,
     pub(crate) passphrase: Option<String>,
     pub(crate) remote_path: Option<String>,
-    pub(crate) trust_host_key: Option<bool>,
+    pub(crate) host_key_approval: Option<HostKeyApproval>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HostKeyApproval {
+    token: String,
+    host: String,
+    port: u16,
+    fingerprint: String,
+}
+
+struct HostKeyChallenge {
+    approval: HostKeyApproval,
+    key: Vec<u8>,
+    created: Instant,
+}
+
+#[derive(Default)]
+struct HostKeyConfirmation {
+    pending: Option<HostKeyChallenge>,
+}
+
+impl HostKeyConfirmation {
+    fn cancel(&mut self, token: &str) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.approval.token == token)
+        {
+            self.pending = None;
+        }
+    }
+    fn consume(
+        &mut self,
+        approval: Option<HostKeyApproval>,
+        host: &str,
+        port: u16,
+    ) -> Result<Option<HostKeyChallenge>, String> {
+        let pending = self.pending.take();
+        let Some(approval) = approval else {
+            return Ok(None);
+        };
+        let Some(challenge) = pending else {
+            return Err(host_key_approval_error());
+        };
+        if challenge.created.elapsed() > Duration::from_secs(300)
+            || approval.token != challenge.approval.token
+            || approval.host != host
+            || approval.port != port
+            || approval.host != challenge.approval.host
+            || approval.port != challenge.approval.port
+            || approval.fingerprint != challenge.approval.fingerprint
+        {
+            return Err(host_key_approval_error());
+        }
+        Ok(Some(challenge))
+    }
+
+    fn prompt(
+        &mut self,
+        session: &Session,
+        host: &str,
+        port: u16,
+        path: &Path,
+    ) -> Result<(), String> {
+        let (key, _) = session
+            .host_key()
+            .ok_or_else(|| "SSH server host key is unavailable.".to_string())?;
+        let fingerprint = host_key_fingerprint(session);
+        if fingerprint == "unavailable" {
+            return Err("SSH server host key is unavailable.".to_string());
+        }
+        let token = format!(
+            "host-key-{}",
+            SFTP_CONNECTION_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        let error = format!(
+            "{UNKNOWN_HOST_KEY_ERROR_PREFIX}\t{host}\t{port}\t{fingerprint}\t{token}\t{}",
+            path.display()
+        );
+        self.pending = Some(HostKeyChallenge {
+            approval: HostKeyApproval {
+                token,
+                host: host.into(),
+                port,
+                fingerprint,
+            },
+            key: key.to_vec(),
+            created: Instant::now(),
+        });
+        Err(error)
+    }
+}
+
+fn host_key_approval_error() -> String {
+    "SSH host key approval is stale or does not match this connection. Connect again to confirm the current key.".into()
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -86,6 +182,7 @@ pub(crate) struct SftpDirectoryListing {
 #[derive(Default)]
 pub(crate) struct SftpState {
     connections: Mutex<HashMap<String, SharedSftpConnection>>,
+    host_key_confirmation: Arc<Mutex<HostKeyConfirmation>>,
 }
 
 pub(crate) type SharedSftpConnection = Arc<Mutex<SftpConnection>>;
@@ -117,6 +214,7 @@ impl SftpState {
             .clone();
         Ok(Self {
             connections: Mutex::new(connections),
+            host_key_confirmation: Arc::clone(&self.host_key_confirmation),
         })
     }
 }
@@ -151,14 +249,29 @@ static SFTP_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 static SFTP_SESSION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[tauri::command]
+pub(crate) fn cancel_sftp_host_key_confirmation(
+    state: State<'_, SftpState>,
+    token: String,
+) -> Result<(), String> {
+    let mut confirmation = state
+        .host_key_confirmation
+        .lock()
+        .map_err(|_| host_key_approval_error())?;
+    confirmation.cancel(&token);
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) async fn test_sftp_connection(
     state: State<'_, SftpState>,
     request: SftpConnectionRequest,
 ) -> Result<SftpConnectionTestResult, String> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || test_sftp_connection_blocking(request))
-            .await
-            .map_err(|error| format!("SFTP connection task failed: {error}"))??;
+    let confirmation = Arc::clone(&state.host_key_confirmation);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        test_sftp_connection_blocking(request, confirmation)
+    })
+    .await
+    .map_err(|error| format!("SFTP connection task failed: {error}"))??;
     let SftpConnectedSession {
         connection_id,
         display_name,
@@ -262,6 +375,7 @@ pub(crate) async fn list_sftp_directory(
 
 fn test_sftp_connection_blocking(
     request: SftpConnectionRequest,
+    confirmation: Arc<Mutex<HostKeyConfirmation>>,
 ) -> Result<SftpConnectedSession, String> {
     let SftpConnectionRequest {
         name,
@@ -273,7 +387,7 @@ fn test_sftp_connection_blocking(
         private_key_path,
         passphrase,
         remote_path,
-        trust_host_key,
+        host_key_approval,
     } = request;
     let password = Zeroizing::new(password);
     let passphrase = normalized_optional_string(passphrase.as_deref()).map(Zeroizing::new);
@@ -281,7 +395,7 @@ fn test_sftp_connection_blocking(
     let username = username.trim();
     let auth_kind = normalized_sftp_auth_kind(auth_kind.as_deref());
     let private_key_path = normalized_optional_string(private_key_path.as_deref());
-    let remote_path = normalized_sftp_remote_path(remote_path.as_deref());
+    let remote_path = normalized_sftp_start_path(remote_path.as_deref());
     validate_sftp_connection_request(
         host,
         port,
@@ -290,6 +404,10 @@ fn test_sftp_connection_blocking(
         &password,
         private_key_path.as_deref(),
     )?;
+    let approval = confirmation
+        .lock()
+        .map_err(|_| host_key_approval_error())?
+        .consume(host_key_approval, host, port)?;
 
     let stream = connect_sftp_tcp_stream(host, port)?;
 
@@ -299,7 +417,14 @@ fn test_sftp_connection_blocking(
     session
         .handshake()
         .map_err(|error| format!("SSH handshake failed: {error}"))?;
-    verify_known_host(&session, host, port, trust_host_key.unwrap_or(false))?;
+    verify_known_host(
+        &session,
+        host,
+        port,
+        approval.as_ref(),
+        &confirmation,
+        &known_hosts_path()?,
+    )?;
     authenticate_ssh_session(
         &session,
         username,
@@ -450,15 +575,21 @@ fn verify_known_host(
     session: &Session,
     host: &str,
     port: u16,
-    trust_host_key: bool,
+    approval: Option<&HostKeyChallenge>,
+    confirmation: &Mutex<HostKeyConfirmation>,
+    known_hosts_path: &Path,
 ) -> Result<(), String> {
-    let known_hosts_path = known_hosts_path()?;
-    if !known_hosts_path.is_file() && !trust_host_key {
-        return Err(format!(
-            "{UNKNOWN_HOST_KEY_ERROR_PREFIX}\t{host}\t{port}\t{}\t{}",
-            host_key_fingerprint(session),
-            known_hosts_path.display()
-        ));
+    let (key, key_type) = session
+        .host_key()
+        .ok_or_else(|| "SSH server host key is unavailable.".to_string())?;
+    if let Some(approved) = approval {
+        if approved.approval.host != host
+            || approved.approval.port != port
+            || approved.key != key
+            || approved.approval.fingerprint != host_key_fingerprint(session)
+        {
+            return Err(host_key_approval_error());
+        }
     }
 
     let mut known_hosts = session
@@ -466,7 +597,7 @@ fn verify_known_host(
         .map_err(|error| format!("Open SSH known_hosts store failed: {error}"))?;
     if known_hosts_path.is_file() {
         known_hosts
-            .read_file(&known_hosts_path, KnownHostFileKind::OpenSSH)
+            .read_file(known_hosts_path, KnownHostFileKind::OpenSSH)
             .map_err(|error| {
                 format!(
                     "Read SSH known_hosts failed ({}): {error}",
@@ -475,9 +606,6 @@ fn verify_known_host(
             })?;
     }
 
-    let (key, key_type) = session
-        .host_key()
-        .ok_or_else(|| "SSH server host key is unavailable.".to_string())?;
     match known_hosts.check_port(host, port, key) {
         CheckResult::Match => Ok(()),
         CheckResult::Mismatch => Err(format!(
@@ -485,21 +613,20 @@ fn verify_known_host(
             known_hosts_path.display()
         )),
         CheckResult::NotFound => {
-            if trust_host_key {
+            if approval.is_some() {
                 add_known_host(
                     &mut known_hosts,
-                    &known_hosts_path,
+                    known_hosts_path,
                     host,
                     port,
                     key,
                     key_type,
                 )
             } else {
-                Err(format!(
-                    "{UNKNOWN_HOST_KEY_ERROR_PREFIX}\t{host}\t{port}\t{}\t{}",
-                    host_key_fingerprint(session),
-                    known_hosts_path.display()
-                ))
+                confirmation
+                    .lock()
+                    .map_err(|_| host_key_approval_error())?
+                    .prompt(session, host, port, known_hosts_path)
             }
         }
         CheckResult::Failure => Err(format!(
@@ -672,15 +799,17 @@ pub(crate) fn sftp_entry_kind(perm: Option<u32>) -> EntryKind {
 }
 
 pub(crate) fn normalized_sftp_remote_path(path: Option<&str>) -> String {
-    let path = path
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("/");
+    let path = path.filter(|value| !value.is_empty()).unwrap_or("/");
     if path.starts_with('/') {
         path.to_string()
     } else {
         format!("/{path}")
     }
+}
+
+pub(crate) fn normalized_sftp_start_path(path: Option<&str>) -> String {
+    // An empty form field means root; a supplied path keeps its exact spelling.
+    normalized_sftp_remote_path(path.filter(|value| !value.trim().is_empty()))
 }
 
 pub(crate) fn join_sftp_remote_path(parent_path: &str, name: &str) -> String {
@@ -766,7 +895,284 @@ fn normalized_optional_string(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::SftpConnectionTestResult;
+    use super::*;
+
+    fn confirmation_fixture() -> HostKeyConfirmation {
+        HostKeyConfirmation {
+            pending: Some(HostKeyChallenge {
+                approval: HostKeyApproval {
+                    token: "confirmation-1".into(),
+                    host: "example.test".into(),
+                    port: 22,
+                    fingerprint: "SHA256:A".into(),
+                },
+                key: vec![1, 2, 3],
+                created: Instant::now(),
+            }),
+        }
+    }
+
+    #[test]
+    fn host_key_confirmations_are_bound_single_use_and_expire() {
+        let mut confirmation = confirmation_fixture();
+        let approval = confirmation
+            .pending
+            .as_ref()
+            .expect("prepared confirmation")
+            .approval
+            .clone();
+        assert!(confirmation
+            .consume(Some(approval.clone()), "example.test", 22)
+            .expect("consume approved key")
+            .is_some());
+        assert!(confirmation
+            .consume(Some(approval.clone()), "example.test", 22)
+            .is_err());
+        for (host, port) in [("different.test", 22), ("example.test", 2222)] {
+            let mut confirmation = confirmation_fixture();
+            assert!(confirmation
+                .consume(Some(approval.clone()), host, port)
+                .is_err());
+            assert!(confirmation.pending.is_none());
+        }
+        let mut wrong_key = approval.clone();
+        wrong_key.fingerprint = "SHA256:B".into();
+        assert!(confirmation_fixture()
+            .consume(Some(wrong_key), "example.test", 22)
+            .is_err());
+        let mut expired = confirmation_fixture();
+        expired
+            .pending
+            .as_mut()
+            .expect("expiring confirmation")
+            .created = Instant::now() - Duration::from_secs(301);
+        assert!(expired
+            .consume(Some(approval.clone()), "example.test", 22)
+            .is_err());
+        let mut canceled = confirmation_fixture();
+        canceled.cancel(&approval.token);
+        assert!(canceled
+            .consume(Some(approval.clone()), "example.test", 22)
+            .is_err());
+        let mut new_attempt = confirmation_fixture();
+        assert!(new_attempt
+            .consume(None, "example.test", 22)
+            .expect("begin fresh connection")
+            .is_none());
+        assert!(new_attempt
+            .consume(Some(approval), "example.test", 22)
+            .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires two isolated loopback SSH servers (40226/40227) and WINDY_SFTP_TEST_ROOT"]
+    fn loopback_sftp_host_key_approval_and_exact_paths() {
+        use std::io::Read;
+        let fixture_root =
+            std::env::var("WINDY_SFTP_TEST_ROOT").expect("isolated SFTP fixture root");
+        let root = tempfile::tempdir_in(&fixture_root).expect("create host key test fixture");
+        let known_hosts = root.path().join("known_hosts");
+        let connect = |port| {
+            let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect test SSH server");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set test read timeout");
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set test write timeout");
+            let mut session = Session::new().expect("create test SSH session");
+            session.set_tcp_stream(stream);
+            session.handshake().expect("handshake test SSH server");
+            session
+        };
+        let session_a = connect(40226);
+        let session_b = connect(40227);
+        assert_ne!(
+            session_a.host_key().expect("server A key").0,
+            session_b.host_key().expect("server B key").0
+        );
+        let confirmation = Mutex::new(HostKeyConfirmation::default());
+        let prompt = verify_known_host(
+            &session_a,
+            "127.0.0.1",
+            40226,
+            None,
+            &confirmation,
+            &known_hosts,
+        )
+        .unwrap_err();
+        assert!(prompt.starts_with(UNKNOWN_HOST_KEY_ERROR_PREFIX));
+        assert!(!known_hosts.exists());
+        let approved_a = {
+            let mut store = confirmation.lock().expect("lock key confirmation");
+            let approval = store
+                .pending
+                .as_ref()
+                .expect("key A prompt")
+                .approval
+                .clone();
+            store
+                .consume(Some(approval), "127.0.0.1", 40226)
+                .expect("approve key A")
+                .expect("key A challenge")
+        };
+        assert_eq!(
+            verify_known_host(
+                &session_b,
+                "127.0.0.1",
+                40226,
+                Some(&approved_a),
+                &confirmation,
+                &known_hosts
+            ),
+            Err(host_key_approval_error())
+        );
+        assert!(!known_hosts.exists(), "unseen key B is never saved");
+        assert!(
+            !session_b.authenticated(),
+            "rejected connection stops before authentication"
+        );
+        verify_known_host(
+            &session_a,
+            "127.0.0.1",
+            40226,
+            None,
+            &confirmation,
+            &known_hosts,
+        )
+        .expect_err("confirm key A again after rejected retry");
+        let approved_a = {
+            let mut store = confirmation.lock().expect("lock fresh confirmation");
+            let approval = store
+                .pending
+                .as_ref()
+                .expect("fresh key A prompt")
+                .approval
+                .clone();
+            store
+                .consume(Some(approval), "127.0.0.1", 40226)
+                .expect("approve fresh key A")
+                .expect("fresh challenge")
+        };
+        verify_known_host(
+            &session_a,
+            "127.0.0.1",
+            40226,
+            Some(&approved_a),
+            &confirmation,
+            &known_hosts,
+        )
+        .expect("register approved key A");
+        let contents = fs::read(&known_hosts).expect("read approved known_hosts");
+        assert!(verify_known_host(
+            &session_b,
+            "127.0.0.1",
+            40226,
+            None,
+            &confirmation,
+            &known_hosts
+        )
+        .unwrap_err()
+        .contains("host key mismatch"));
+        assert_eq!(
+            fs::read(&known_hosts).expect("read unchanged known_hosts"),
+            contents
+        );
+        verify_known_host(
+            &session_a,
+            "127.0.0.1",
+            40226,
+            None,
+            &confirmation,
+            &known_hosts,
+        )
+        .expect("reconnect to known key A");
+        let username = std::env::var("USER").expect("test SSH username");
+        session_a
+            .userauth_pubkey_file(
+                &username,
+                None,
+                &Path::new(&fixture_root).join("client"),
+                None,
+            )
+            .expect("authenticate approved test server");
+        let remote_directory = root.path().join("directory ");
+        fs::create_dir(&remote_directory).expect("create whitespace directory");
+        fs::write(remote_directory.join("report"), b"plain contents").expect("write plain sibling");
+        let mut connection = SftpConnection {
+            session: session_a,
+            display_name: "test".into(),
+            remote_path: remote_directory.to_string_lossy().into_owned(),
+            created_at: 0,
+            last_used_at: 0,
+            terminal_profile: SshTerminalProfile {
+                host: "127.0.0.1".into(),
+                port: 40226,
+                username,
+                auth_kind: "privateKey".into(),
+                private_key_path: None,
+            },
+        };
+        for suffix in [" ", "\t", "\u{3000}"] {
+            let name = format!("report{suffix}");
+            fs::write(remote_directory.join(&name), b"selected contents")
+                .expect("write whitespace sibling");
+            let listing = list_sftp_directory_blocking(
+                "session",
+                &mut connection,
+                remote_directory.to_str().expect("remote fixture path"),
+            )
+            .expect("list whitespace entries");
+            let entry = listing
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .expect("selected whitespace entry");
+            let (_, path) = parse_sftp_uri(&entry.path).expect("parse selected entry URI");
+            assert_eq!(Path::new(&path), remote_directory.join(&name));
+            let sftp = connection.session.sftp().expect("open test SFTP");
+            let mut contents = Vec::new();
+            sftp.open(Path::new(&path))
+                .expect("read selected remote entry")
+                .read_to_end(&mut contents)
+                .expect("read remote data");
+            assert_eq!(contents, b"selected contents");
+            let renamed = remote_directory.join(format!("renamed{suffix}"));
+            sftp.rename(Path::new(&path), &renamed, Some(ssh2::RenameFlags::empty()))
+                .expect("rename exact selected entry");
+            sftp.unlink(&renamed).expect("delete exact renamed entry");
+            assert_eq!(
+                fs::read(remote_directory.join("report")).expect("read untouched sibling"),
+                b"plain contents"
+            );
+        }
+    }
+
+    #[test]
+    fn sftp_paths_preserve_whitespace_through_uri_and_navigation() {
+        for suffix in [" ", "\t", "\u{3000}"] {
+            let parent = format!("/folder{suffix}");
+            let name = format!("report{suffix}");
+            let path = join_sftp_remote_path(&parent, &name);
+            assert_eq!(path, format!("{parent}/{name}"));
+            assert_eq!(
+                parse_sftp_uri(&sftp_entry_uri("session", &path)),
+                Some(("session".into(), path.clone()))
+            );
+            assert_eq!(sftp_parent_remote_path(&path), Some(parent.clone()));
+            assert_eq!(sftp_remote_leaf_name(&path), Some(name));
+            assert_eq!(normalized_sftp_start_path(Some(&parent)), parent);
+        }
+        assert_eq!(normalized_sftp_remote_path(Some(" report ")), "/ report ");
+        assert_ne!(
+            sftp_entry_uri("session", "/report"),
+            sftp_entry_uri("session", "/report ")
+        );
+        for blank in [None, Some(""), Some(" \t\u{3000}")] {
+            assert_eq!(normalized_sftp_start_path(blank), "/");
+        }
+    }
 
     #[test]
     fn sftp_connection_result_serializes_localization_metadata() {

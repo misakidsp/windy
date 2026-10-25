@@ -3,7 +3,7 @@ use crate::search::{
     normalized_search_hidden_mode, normalized_search_kind, normalized_search_readonly_mode,
 };
 use crate::sftp::{
-    next_sftp_profile_id, normalized_sftp_auth_kind, normalized_sftp_remote_path,
+    next_sftp_profile_id, normalized_sftp_auth_kind, normalized_sftp_start_path,
     validate_sftp_connection_request, SftpConnectionProfile,
 };
 use serde::{Deserialize, Serialize};
@@ -267,7 +267,7 @@ pub(crate) fn save_sftp_connection_profile(
         host: request.host.trim().to_string(),
         port: request.port,
         username: request.username.trim().to_string(),
-        remote_path: normalized_sftp_remote_path(Some(&request.remote_path)),
+        remote_path: normalized_sftp_start_path(Some(&request.remote_path)),
         auth_kind,
         private_key_path,
     };

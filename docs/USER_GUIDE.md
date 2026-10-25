@@ -53,6 +53,33 @@ entries that resolve to a local regular file, such as local, search, diff,
 operation result, and Git status entries. SFTP entries and archive entries are
 not edited directly.
 
+## Undo/Redo and recovery protection
+
+Use `ctrl+z` to Undo and `ctrl+shift+z` to Redo. Basic mode supports rename and
+empty file/directory creation. New successful changes clear Redo history; failed
+operations with no changes leave it intact.
+
+Enable **File operation recovery protection** in Preferences > General to record
+subsequent local operations. It is off by default. Supported operations include
+rename, same-filesystem move, creation, copy, archive creation/extraction, and
+POSIX permissions/Windows attributes. Permanent deletion and OS trash are
+recorded only and cannot be restored; SFTP is outside this protection.
+
+Before restoring, Windy inspects targets and destinations and asks you to review
+the plan. Identity changes, replaced parents, destination conflicts, or external
+permission changes stop restoration. Edits to the same target are preserved.
+Undo of created data moves it into a `.windy-recovery-…` directory beside the
+original destination; Redo restores that actual data rather than rerunning the
+copy or archive operation. Do not manually move or remove these directories.
+
+History defaults to **20 operations**, configurable from **1 to 1,000**. A batch
+counts as one operation. **Keep after restart** controls inclusion in automatic
+Undo/Redo history after restarting. Turning it off, disabling protection, or
+exiting does not erase on-disk records or retained data. History management shows
+retained locations and logical sizes, and diagnoses damaged records without
+blocking healthy history. Records with retained data or unresolved work are not
+automatically removed, so the count is not a disk-space limit.
+
 ## Viewer
 
 `enter` opens supported files in Windy's internal viewer.
@@ -145,9 +172,16 @@ Windy uses OpenSSH-compatible `known_hosts` verification. If a host key changes,
 Windy refuses the connection until you verify the server and update
 `known_hosts` yourself.
 
-During local/SFTP copy and archive extraction, `esc` opens the cancellation
-confirmation. Windy checks cancellation between directory entries and file
-chunks and removes incomplete output where possible.
+Copy, archive creation/extraction, SFTP copy, and recorded recovery Undo/Redo
+support `esc` cancellation confirmation. Cancellation is checked at safe entry
+or chunk boundaries. Delete, trash, move, rename, permission changes, and new
+file/directory creation do not support cancellation and do not show acceptance.
+Failed directory copies retain partial data and report its staging location.
+Final publication rejects unexpected destination collisions rather than overwriting.
+
+First-time host-key approval is bound to the displayed host, port, fingerprint,
+and actual key, expires after five minutes, and can be used once. A different
+key on reconnection is refused before registration or authentication.
 
 ## Terminal
 

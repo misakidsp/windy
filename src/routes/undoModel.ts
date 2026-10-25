@@ -1,10 +1,11 @@
+import { confirmationMessageFor, plannedActionsFor } from "./operationJobModel";
 import { translateMessage, type Translate } from "./localization";
 import type { FileEntry, FileOperationJob, FileOperationTarget, PaneState, UndoSnapshot } from "./types";
 
 const fallbackTranslate: Translate = (id, values) => translateMessage(undefined, id, values);
 
 export function createUndoSnapshot(job: FileOperationJob, t: Translate = fallbackTranslate): UndoSnapshot | null {
-  if (job.commandId.startsWith("undo.")) return null;
+  if (job.commandId.startsWith("undo.") || job.sourcePath.startsWith("sftp://") || job.destinationPath?.startsWith("sftp://") || job.targets.some(target => target.path.startsWith("sftp://"))) return null;
   if (job.kind === "rename") return createRenameUndo(job, t);
   if (job.kind === "mkdir") return createCreatedEntryUndo(job, "removeEmptyDirectory", t("undo.label.createDirectory"), t);
   if (job.kind === "createFile") return createCreatedEntryUndo(job, "removeEmptyFile", t("undo.label.createFile"), t);
@@ -44,6 +45,46 @@ export function undoSafetyMessages(snapshot: UndoSnapshot, pane: PaneState, t: T
   return messages;
 }
 
+export function historyOperationLabelId(job: FileOperationJob): string {
+  const labels: Record<string, string> = {
+    "undo.recovery": "recovery.undo",
+    "redo.recovery": "recovery.redo",
+    "undo.rename": "undo.label.rename",
+    "undo.removeEmptyDirectory": "undo.label.createDirectory",
+    "undo.removeEmptyFile": "undo.label.createFile",
+    "redo.rename": "undo.label.redoRename",
+    "redo.createDirectory": "undo.label.redoCreateDirectory",
+    "redo.createFile": "undo.label.redoCreateFile",
+  };
+  return labels[job.commandId] ?? `activity.operation.${job.kind}`;
+}
+
+export function localizedUndoSnapshot(snapshot: UndoSnapshot, t: Translate): UndoSnapshot {
+  if (snapshot.job.recoveryId) return { ...snapshot, label: t("recovery.undo"), redoLabel: t("recovery.redo"), job: { ...snapshot.job, label: t("recovery.undo") }, redoJob: { ...snapshot.redoJob, label: t("recovery.redo") } };
+  const forward = snapshot.redoJob;
+  const localized = createUndoSnapshot({
+    ...forward,
+    plannedActions: plannedActionsFor(forward.kind, forward.targets, forward.sourcePath, forward.destinationPath, t),
+    confirmationMessage: confirmationMessageFor(forward.kind, forward.targets, forward.sourcePath, forward.destinationPath, t),
+  }, t);
+  if (!localized) return snapshot;
+  return { ...localized, historyUpdatedAt: snapshot.historyUpdatedAt, job: { ...localized.job, id: snapshot.job.id }, redoJob: { ...localized.redoJob, id: snapshot.redoJob.id } };
+}
+
+export function redoSafetyMessages(snapshot: UndoSnapshot, pane: PaneState, t: Translate = fallbackTranslate): string[] {
+  const job = snapshot.redoJob;
+  if (job.kind === "rename") return undoSafetyMessages({ ...snapshot, job }, pane, t);
+  const name = job.requestedName?.trim();
+  const path = name && job.destinationPath ? joinChildPath(job.destinationPath, name) : null;
+  return path && findEntryByPath(pane.entries, path) ? [t("undo.safety.redoDestinationExists", { path })] : [];
+}
+
+function renameHistoryTarget(target: FileOperationTarget): FileOperationTarget {
+  return target.path.startsWith("sftp://") ? target : {
+    ...target, expectedState: { kind: target.kind, size: target.size, modifiedAt: target.modifiedAt },
+  };
+}
+
 function createRenameUndo(job: FileOperationJob, t: Translate): UndoSnapshot | null {
   const target = job.targets[0];
   const requestedName = job.requestedName?.trim();
@@ -56,8 +97,9 @@ function createRenameUndo(job: FileOperationJob, t: Translate): UndoSnapshot | n
     redoLabel: t("undo.label.redoRenameStatus", { from: target.name, to: requestedName }),
     redoJob: {
       ...job,
-      id: `redo-${Date.now().toString(36)}`,
+      id: `redo-${crypto.randomUUID()}`,
       commandId: "redo.rename",
+      targets: [renameHistoryTarget(target)],
       label: t("undo.label.redoRename"),
       status: "preview",
       risk: "warning",
@@ -65,13 +107,13 @@ function createRenameUndo(job: FileOperationJob, t: Translate): UndoSnapshot | n
     },
     job: {
       ...job,
-      id: `undo-${Date.now().toString(36)}`,
+      id: `undo-${crypto.randomUUID()}`,
       kind: "rename",
       commandId: "undo.rename",
       label: t("undo.label.rename"),
       status: "preview",
       risk: "warning",
-      targets: [{ ...target, path: renamedPath, key: renamedPath, name: requestedName }],
+      targets: [renameHistoryTarget({ ...target, path: renamedPath, key: renamedPath, name: requestedName })],
       plannedActions: [t("undo.planned.rename", { path: renamedPath, name: target.name })],
       confirmationMessage: t("undo.confirm.rename", { name: target.name }),
       requestedName: target.name,
@@ -105,7 +147,7 @@ function createCreatedEntryUndo(
     redoLabel: kind === "removeEmptyDirectory" ? t("undo.label.redoCreateDirectoryStatus", { name: requestedName }) : t("undo.label.redoCreateFileStatus", { name: requestedName }),
     redoJob: {
       ...job,
-      id: `redo-${Date.now().toString(36)}`,
+      id: `redo-${crypto.randomUUID()}`,
       commandId: kind === "removeEmptyDirectory" ? "redo.createDirectory" : "redo.createFile",
       label: kind === "removeEmptyDirectory" ? t("undo.label.redoCreateDirectory") : t("undo.label.redoCreateFile"),
       status: "preview",
@@ -114,7 +156,7 @@ function createCreatedEntryUndo(
     },
     job: {
       ...job,
-      id: `undo-${Date.now().toString(36)}`,
+      id: `undo-${crypto.randomUUID()}`,
       kind,
       commandId: kind === "removeEmptyDirectory" ? "undo.removeEmptyDirectory" : "undo.removeEmptyFile",
       label,
@@ -143,10 +185,11 @@ function renameUndoSafetyMessages(job: FileOperationJob, entries: FileEntry[], t
   if (!currentEntry) {
     messages.push(t("undo.safety.notVisible", { path: target.path }));
   } else {
-    if (target.size !== undefined && currentEntry.size !== target.size) {
+    if (currentEntry.kind !== target.kind) messages.push(t("undo.safety.kindChanged", { name: target.name }));
+    if (target.size != null && currentEntry.size !== target.size) {
       messages.push(t("undo.safety.sizeChanged", { name: target.name }));
     }
-    if (target.modifiedAt !== undefined && currentEntry.modifiedAt !== target.modifiedAt) {
+    if (target.modifiedAt != null && currentEntry.modifiedAt !== target.modifiedAt) {
       messages.push(t("undo.safety.modifiedChanged", { name: target.name }));
     }
   }

@@ -28,7 +28,8 @@ const form: SftpConnectionForm = {
   saveProfile: true,
 };
 
-assert.deepEqual(sftpConnectionTestRequestFromForm(form, true), {
+const approval = { host: "example.test", port: 2222, fingerprint: "SHA256:abc", token: "host-key-1", knownHostsPath: "/test/known_hosts" };
+assert.deepEqual(sftpConnectionTestRequestFromForm(form, approval), {
   name: "dev",
   host: "example.test",
   port: 2222,
@@ -38,7 +39,7 @@ assert.deepEqual(sftpConnectionTestRequestFromForm(form, true), {
   privateKeyPath: "/home/windy/.ssh/id_ed25519",
   passphrase: "phrase",
   remotePath: "/srv",
-  trustHostKey: true,
+  hostKeyApproval: { host: "example.test", port: 2222, fingerprint: "SHA256:abc", token: "host-key-1" },
 });
 
 assert.deepEqual(sftpProfileSaveRequestFromForm(form), {
@@ -53,11 +54,12 @@ assert.deepEqual(sftpProfileSaveRequestFromForm(form), {
 });
 
 assert.deepEqual(
-  parseKnownHostPrompt("WINDY_UNKNOWN_HOST_KEY\texample.test\t22\tSHA256:abc\t/home/user/.ssh/known_hosts"),
+  parseKnownHostPrompt("WINDY_UNKNOWN_HOST_KEY\texample.test\t22\tSHA256:abc\thost-key-1\t/home/user/.ssh/known_hosts"),
   {
     host: "example.test",
     port: 22,
     fingerprint: "SHA256:abc",
+    token: "host-key-1",
     knownHostsPath: "/home/user/.ssh/known_hosts",
   },
 );
@@ -118,7 +120,7 @@ async function run(): Promise<void> {
   await saveSftpConnectionProfile(invoke, form);
   await saveLocalFavoriteProfile(invoke, "/work/src");
   await saveSearchProfile(invoke, source);
-  await testSftpConnection(invoke, form, false);
+  await testSftpConnection(invoke, form);
   await disconnectSftpSession(invoke, "conn-1");
 
   assert.deepEqual(

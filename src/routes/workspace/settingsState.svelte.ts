@@ -12,6 +12,7 @@ import type {
 export function createSettingsState() {
   let appSettings: AppSettings = $state.raw({
     useTrash: true,
+    recovery: { enabled: false, historyLimit: 20, persistHistory: false },
     operationResult: {
       notificationDisplay: "details",
       showStatus: true,
