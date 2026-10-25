@@ -33,7 +33,7 @@ regex = "1"
 tar = "~0.4.46"
 trash = "~5.2.6"
 zeroize = "1"
-zip = { version = "~2.4.2", default-features = false, features = ["deflate"] }
+zip = { version = "~8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ssh2 = { version = "~0.9.5", features = ["vendored-openssl"] }
