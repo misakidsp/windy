@@ -19,22 +19,21 @@ file previews, and basic SFTP operations in one Tauri desktop app.
 - ZIP, TAR, TAR.GZ, and TGZ archive browsing and extraction
 - Quick filter and detailed local search result panes
 - Local directory comparison
-- Undo/redo for selected safe operations
+- Undo/redo with optional local recovery protection and configurable history
 - Bottom terminal pane linked to file selections
 - Path copy and external command templates
 - SFTP connection profiles and local/SFTP transfer basics
 - Preferences UI for editor, keybinding, appearance, language, reset, and Safe Mode settings
-- Cancellable file transfers and archive extraction with partial-output cleanup
+- Cancellable file transfers and archives, with retained partial directories reported on failure
 - Resource limits for large searches, directory listings, and archive expansion
 - macOS, Windows, and Linux oriented codebase
-
 - Separate progress/result history with automatic console switching and compact status display
 
 ## Beta Status
 
 This repository is a public beta snapshot of Windy.
 
-Current beta: `v0.2.4-beta.1`.
+Current beta: `v0.2.5-beta.1`.
 
 Known beta caveats:
 

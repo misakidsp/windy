@@ -24,8 +24,10 @@ import {
 import {
   operationResultItemMessage,
 } from "../operationResultModel";
-import { cancelFileOperationJob, executeFileOperationJob } from "../operationSideEffects";
-import { createUndoSnapshot, undoSafetyMessages } from "../undoModel";
+import { cancelFileOperationJob, executeFileOperationJob, fileOperationCanCancel } from "../operationSideEffects";
+import { createUndoSnapshot, undoSafetyMessages, redoSafetyMessages, historyOperationLabelId, localizedUndoSnapshot } from "../undoModel";
+import { recoverySnapshot, historyLimit } from "../recoveryModel";
+import type { RecoveryRecord, RecoveryPlan, RecoveryHistory } from "../types";
 import { fileExtension } from "../pathUtils";
 import type {
   FileEntry,
@@ -109,6 +111,8 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
       return;
     }
 
+    state.operations.activeUndoSnapshot = null;
+    state.operations.activeRedoSnapshot = null;
     const job = createFileOperationJob(kind);
     state.operations.operationJob = job;
     state.operations.operationResult = null;
@@ -132,6 +136,8 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
   }
 
   function closeOperationPreview(): void {
+    state.operations.activeUndoSnapshot = null;
+    state.operations.activeRedoSnapshot = null;
     state.operations.operationJob = null;
     state.operations.operationResult = null;
     state.operations.operationCancelRequested = false;
@@ -143,7 +149,7 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
   }
 
   function updateOperationName(name: string): void {
-    if (!state.operations.operationJob) return;
+    if (!state.operations.operationJob || state.operations.activeUndoSnapshot || state.operations.activeRedoSnapshot) return;
 
     state.operations.operationJob = {
       ...state.operations.operationJob,
@@ -159,14 +165,17 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
   }
 
   function operationConflictMessages(job: FileOperationJob): string[] {
+    if (job.recoveryId) return [];
     return operationConflictMessagesForEntries(job, state.panes.panes[job.destinationPaneId ?? job.sourcePaneId].entries, state.settings.t);
   }
 
   function operationBlockingMessages(job: FileOperationJob): string[] {
+    if (job.recoveryId) return [];
     return operationBlockingMessagesForEntries(job, state.panes.panes[job.destinationPaneId ?? job.sourcePaneId].entries, state.settings.t);
   }
 
   function executionConfirmationMessage(job: FileOperationJob): string {
+    if (job.recoveryId) return job.confirmationMessage;
     return operationExecutionConfirmationMessage(job, state.panes.panes[job.destinationPaneId ?? job.sourcePaneId].entries, state.settings.t);
   }
 
@@ -227,9 +236,10 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
     }
 
     const executedJob = { ...state.operations.operationJob, id: crypto.randomUUID() };
-    state.activity.begin({ id: `activity.operation.${executedJob.kind}` }, executedJob.id);
+    state.activity.begin({ id: historyOperationLabelId(executedJob) }, executedJob.id);
     const executableJob: FileOperationJob = {
       ...executedJob,
+      recoverySettings: state.settings.appSettings.recovery,
       sftpSafeTransferPartThresholdBytes: state.settings.appSettings.sftpTransfer.partFileThresholdBytes,
     };
     const executingUndo = executedJob.commandId.startsWith("undo.");
@@ -248,13 +258,19 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
       const result = await executeFileOperationJob(invoke, executableJob);
       await handleOperationResult(executedJob, result);
       const executingRedo = executedJob.commandId.startsWith("redo.");
-      if (executingUndo && result.succeeded.length > 0 && result.failed.length === 0 && !result.canceled) {
+      if (result.recoveryId || executedJob.recoveryId) {
+        if (!executingUndo && !executingRedo && (result.succeeded.length > 0 || ["applied", "interrupted", "partial"].includes(result.recoveryStatus ?? ""))) state.operations.redoStack = [];
+        await loadRecoveryHistory();
+      } else if (executingUndo && result.succeeded.length > 0 && result.failed.length === 0 && !result.canceled) {
         commitUndoHistory();
       } else if (executingRedo && result.succeeded.length > 0 && result.failed.length === 0 && !result.canceled) {
         commitRedoHistory(executedJob);
-      } else if (!executingUndo && !executingRedo && result.succeeded.length > 0 && result.failed.length === 0 && !result.canceled) {
-        pushUndoSnapshot(createUndoSnapshot(executedJob, state.settings.t), true);
+      } else if (!executingUndo && !executingRedo && executedJob.kind !== "refresh" && result.succeeded.length > 0) {
+        // Any new committed change invalidates Redo, including partial/canceled jobs.
+        state.operations.redoStack = [];
+        if (result.failed.length === 0 && !result.canceled) pushUndoSnapshot(createUndoSnapshot(executedJob, state.settings.t), false);
       }
+      if (state.settings.appSettings.recovery?.enabled && !result.recoveryId) await loadRecoveryHistory();
       await actions.reloadPanesAfterOperation(executableJob);
     } catch (error) {
       const result = {
@@ -277,6 +293,11 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
 
   async function cancelOperationConfirmation(): Promise<void> {
     if (state.operations.operationRunning && state.operations.operationJob) {
+      if (!fileOperationCanCancel(state.operations.operationJob)) {
+        state.app.notify("operation.cancelUnsupported", undefined, "warning", false);
+        state.app.lastCommandId = "operation.cancelUnsupported";
+        return;
+      }
       if (state.operations.operationCancelRequested) {
         state.app.notify("operation.cancelAlreadyRequested", undefined, "completed", false);
         state.app.lastCommandId = "operation.cancelAlreadyRequested";
@@ -317,6 +338,11 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
 
   async function requestOperationCancel(): Promise<void> {
     if (!state.operations.operationJob) return;
+    if (!fileOperationCanCancel(state.operations.operationJob)) {
+      state.app.notify("operation.cancelUnsupported", undefined, "warning", false);
+      state.app.lastCommandId = "operation.cancelUnsupported";
+      return;
+    }
     const jobId = state.operations.operationJob.id;
     const resetRequest = () => {
       state.activity.resume(jobId);
@@ -332,9 +358,9 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
     state.app.lastCommandId = "operation.cancelRequested";
     try {
       state.activity.canceling(jobId);
-      const accepted = await cancelFileOperationJob(invoke, jobId);
-      if (!accepted) resetRequest();
-      state.app.notify(accepted ? "operation.cancelRequestedStatus" : "operation.cancelNotAccepted", undefined, "warning", false);
+      const status = await cancelFileOperationJob(invoke, jobId);
+      if (status !== "accepted") resetRequest();
+      state.app.notify(status === "accepted" ? "operation.cancelRequestedStatus" : status === "unsupported" ? "operation.cancelUnsupported" : "operation.cancelNotAccepted", undefined, "warning", false);
     } catch (error) {
       resetRequest();
       state.app.notify("operation.cancelFailed", { error: actions.localizedBackendError(error) }, "failed", false);
@@ -342,13 +368,16 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
   }
 
   function previewUndoOperation(): void {
-    const snapshot = state.operations.undoStack.at(-1) ?? null;
+    if (state.operations.operationRunning) return;
+    const recorded = state.operations.undoStack.at(-1);
+    const snapshot = recorded ? localizedUndoSnapshot(recorded, state.settings.t) : null;
     if (!snapshot) {
       state.app.notify("operation.noUndo", undefined, "warning", false);
       state.app.lastCommandId = "app.undo.empty";
       return;
     }
 
+    if (snapshot.job.recoveryId) { void previewRecovery(snapshot, "undo"); return; }
     state.operations.activeUndoSnapshot = snapshot;
     state.operations.activeRedoSnapshot = null;
     state.operations.operationJob = snapshot.job;
@@ -362,13 +391,16 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
   }
 
   function previewRedoOperation(): void {
-    const snapshot = state.operations.redoStack.at(-1) ?? null;
+    if (state.operations.operationRunning) return;
+    const recorded = state.operations.redoStack.at(-1);
+    const snapshot = recorded ? localizedUndoSnapshot(recorded, state.settings.t) : null;
     if (!snapshot) {
       state.app.notify("operation.noRedo", undefined, "warning", false);
       state.app.lastCommandId = "app.redo.empty";
       return;
     }
 
+    if (snapshot.redoJob.recoveryId) { void previewRecovery(snapshot, "redo"); return; }
     state.operations.activeRedoSnapshot = snapshot;
     state.operations.activeUndoSnapshot = null;
     state.operations.operationJob = snapshot.redoJob;
@@ -382,23 +414,79 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
   }
 
   function operationSafetyMessages(job: FileOperationJob): string[] {
+    if (job.recoveryId) return [state.settings.t("recovery.preserveContents")];
     if (state.operations.activeUndoSnapshot && job.id === state.operations.activeUndoSnapshot.job.id) {
       return undoSafetyMessages(state.operations.activeUndoSnapshot, state.panes.panes[job.sourcePaneId], state.settings.t);
+    }
+    if (state.operations.activeRedoSnapshot && job.id === state.operations.activeRedoSnapshot.redoJob.id) {
+      return redoSafetyMessages(state.operations.activeRedoSnapshot, state.panes.panes[job.sourcePaneId], state.settings.t);
     }
     return [];
   }
 
+  async function loadRecoveryHistory(): Promise<void> {
+    try {
+      const { records } = await invoke<RecoveryHistory>("recovery_history");
+      if (!Array.isArray(records)) return;
+      const legacyUndo = state.operations.undoStack.filter(s => !s.job.recoveryId);
+      const legacyRedo = state.operations.redoStack.filter(s => !s.job.recoveryId);
+      state.operations.undoStack = [...legacyUndo, ...records.filter(r => r.state === "applied" || r.state === "partial").map(r => recoverySnapshot(r, state.settings.t))].sort((a,b) => historyTime(a) - historyTime(b));
+      state.operations.redoStack = [...legacyRedo, ...records.filter(r => r.state === "undone").map(r => recoverySnapshot(r, state.settings.t))].sort((a,b) => historyTime(a) - historyTime(b));
+      trimHistory();
+    } catch (error) { state.app.notify("recovery.loadFailed", { error: actions.localizedBackendError(error) }, "failed", false); }
+  }
+
+  function previewRecoveryRecord(record: RecoveryRecord, direction: "undo" | "redo"): void {
+    if (state.operations.operationRunning) return;
+    state.settings.preferencesDialogOpen = false;
+    void previewRecovery(recoverySnapshot(record, state.settings.t), direction);
+  }
+
+  async function previewRecovery(snapshot: UndoSnapshot, direction: "undo" | "redo"): Promise<void> {
+    state.operations.operationRunning = true;
+    const activityId = crypto.randomUUID();
+    state.activity.begin({ id: "recovery.investigating" }, activityId);
+    try {
+      const original = direction === "undo" ? snapshot.job : snapshot.redoJob;
+      const plan = await invoke<RecoveryPlan>("recovery_plan", { id: original.recoveryId, direction });
+      const issues = plan.issues.map(issue => `${issue.messageId.startsWith("recovery.") ? state.settings.t(issue.messageId) : issue.messageId}${issue.path ? ` — ${issue.path}` : ""}`);
+      const attributeActions = (plan.attributes ?? []).map(change => plan.record.kind === "chmod"
+        ? state.settings.t("recovery.planMode", { path: change.path, before: change.before.mode.toString(8), after: change.after.mode.toString(8) })
+        : state.settings.t("recovery.planAttributes", { path: change.path, readonlyBefore: state.settings.t(change.before.readonly ? "common.on" : "common.off"), readonlyAfter: state.settings.t(change.after.readonly ? "common.on" : "common.off"), hiddenBefore: state.settings.t(change.before.hidden ? "common.on" : "common.off"), hiddenAfter: state.settings.t(change.after.hidden ? "common.on" : "common.off") }));
+      const job = { ...original, sourcePaneId: state.panes.activePaneId, plannedActions: [...plan.paths, ...attributeActions], executable: issues.length === 0, confirmationMessage: issues.length ? issues.join("\n") : state.settings.t("recovery.confirm") };
+      state.operations.activeUndoSnapshot = direction === "undo" ? snapshot : null;
+      state.operations.activeRedoSnapshot = direction === "redo" ? snapshot : null;
+      state.operations.operationJob = job;
+      state.operations.operationResult = null;
+      state.operations.confirmationDialogOpen = true;
+      state.activity.finish(activityId, issues.length ? "failed" : "completed", { id: issues.length ? "recovery.blocked" : "recovery.ready" });
+    } catch (error) {
+      state.activity.finish(activityId, "failed", { id: "recovery.loadFailed", values: { error: actions.localizedBackendError(error) } });
+    } finally { state.operations.operationRunning = false; }
+  }
+
+  function historyTime(snapshot: UndoSnapshot): number { return snapshot.historyUpdatedAt ?? Date.parse(snapshot.job.createdAt); }
+
+  function trimHistory(): void {
+    const all = [...state.operations.undoStack, ...state.operations.redoStack];
+    const keep = new Set(all.sort((a,b) => historyTime(b) - historyTime(a)).slice(0,historyLimit(state.settings.appSettings.recovery?.historyLimit)).map(s => s.job.id));
+    state.operations.undoStack = state.operations.undoStack.filter(s => keep.has(s.job.id));
+    state.operations.redoStack = state.operations.redoStack.filter(s => keep.has(s.job.id));
+  }
+
   function pushUndoSnapshot(snapshot: UndoSnapshot | null, clearRedo: boolean): void {
-    if (!snapshot) return;
-    state.operations.undoStack = [...state.operations.undoStack, snapshot].slice(-20);
     if (clearRedo) state.operations.redoStack = [];
+    if (!snapshot) return;
+    state.operations.undoStack = [...state.operations.undoStack, snapshot];
+    trimHistory();
   }
 
   function commitUndoHistory(): void {
     if (!state.operations.activeUndoSnapshot) return;
     const snapshot = state.operations.activeUndoSnapshot;
     state.operations.undoStack = state.operations.undoStack.at(-1)?.job.id === snapshot.job.id ? state.operations.undoStack.slice(0, -1) : state.operations.undoStack.filter((item) => item.job.id !== snapshot.job.id);
-    state.operations.redoStack = [...state.operations.redoStack, snapshot].slice(-20);
+    state.operations.redoStack = [...state.operations.redoStack, { ...snapshot, historyUpdatedAt: Date.now() }];
+    trimHistory();
   }
 
   function commitRedoHistory(executedJob: FileOperationJob): void {
@@ -444,6 +532,8 @@ export function createOperationsController(state: Pick<WorkspaceState, "activity
   }
 
   return {
+    loadRecoveryHistory,
+    previewRecoveryRecord,
     selectedOperationTargets,
     isSupportedArchiveName,
     useWindowsAttributesOperation,

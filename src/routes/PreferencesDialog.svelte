@@ -1,4 +1,8 @@
 <script lang="ts">
+  import RecoveryHistory from "./RecoveryHistory.svelte";
+  import type { RecoveryRecord } from "./types";
+  export let onRecoveryChanged: () => Promise<void> = async () => {};
+  export let onRecoveryRestore: (record: RecoveryRecord, direction: "undo" | "redo") => void = () => {};
   import type { AppearanceSettings, AppSettings, KeybindSettings, LanguagePresetInfo, LanguageSettings } from "./types";
   import type { Translate } from "./localization";
   import { keyHelpCommandLabel } from "./keyHelpModel";
@@ -42,6 +46,9 @@
   let editorArgs = appSettings.externalEditor.args.join("\n");
   let notificationDisplay = appSettings.operationResult.notificationDisplay ?? "details";
   let useTrash = appSettings.useTrash;
+  let recoveryEnabled = appSettings.recovery?.enabled ?? false;
+  let recoveryLimit = appSettings.recovery?.historyLimit ?? 20;
+  let recoveryPersist = appSettings.recovery?.persistHistory ?? false;
   let uiFamily = appearanceSettings.fonts.uiFamily;
   let terminalFamily = appearanceSettings.fonts.terminalFamily;
   let uiSize = String(appearanceSettings.fonts.uiSize);
@@ -72,6 +79,9 @@
     editorCommand = appSettings.externalEditor.command;
     editorArgs = appSettings.externalEditor.args.join("\n");
     useTrash = appSettings.useTrash;
+    recoveryEnabled = appSettings.recovery?.enabled ?? false;
+    recoveryLimit = appSettings.recovery?.historyLimit ?? 20;
+    recoveryPersist = appSettings.recovery?.persistHistory ?? false;
     notificationDisplay = appSettings.operationResult.notificationDisplay ?? "details";
     lastAppSettings = appSettings;
   }
@@ -183,6 +193,7 @@
     await onSaveAppSettings({
       ...appSettings,
       useTrash,
+      recovery: { enabled: recoveryEnabled, historyLimit: Math.min(1000, Math.max(1, Math.trunc(Number(recoveryLimit) || 20))), persistHistory: recoveryPersist },
       operationResult: { ...appSettings.operationResult, notificationDisplay, printToTerminal: false },
       externalEditor: {
         command: editorCommand.trim(),
@@ -318,6 +329,12 @@
             <input type="checkbox" checked={useTrash} onchange={(event) => (useTrash = event.currentTarget.checked)} />
             <span>{t("preferences.useTrash")}</span>
           </label>
+          <label class="checkbox-row"><input type="checkbox" bind:checked={recoveryEnabled} /><span>{t("recovery.enabled")}</span></label>
+          <p>{t("recovery.description")}</p>
+          <label><span>{t("recovery.limit")}</span><input type="number" min="1" max="1000" step="1" bind:value={recoveryLimit} /></label>
+          <label class="checkbox-row"><input type="checkbox" bind:checked={recoveryPersist} /><span>{t("recovery.persist")}</span></label>
+          <p>{t("recovery.retentionNotice")}</p>
+          <RecoveryHistory {t} onRestore={onRecoveryRestore} onChanged={onRecoveryChanged} />
           <label>
             <span>{t("preferences.editorCommand")}</span>
             <input bind:value={editorCommand} placeholder={t("preferences.editorCommandPlaceholder")} spellcheck="false" autocomplete="off" />

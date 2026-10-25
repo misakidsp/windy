@@ -78,28 +78,29 @@ export function deleteSearchProfile(invoke: TauriInvoke, id: string): Promise<vo
 export function testSftpConnection(
   invoke: TauriInvoke,
   form: SftpConnectionForm,
-  trustHostKey: boolean,
+  hostKeyApproval: PendingKnownHost | null = null,
 ): Promise<SftpConnectionTestResult> {
   return invokeCommand<SftpConnectionTestResult>(invoke, "test_sftp_connection", {
-    request: sftpConnectionTestRequestFromForm(form, trustHostKey),
+    request: sftpConnectionTestRequestFromForm(form, hostKeyApproval),
   });
 }
 
 export function parseKnownHostPrompt(error: unknown): PendingKnownHost | null {
   const text = invokeErrorMessage(error);
   const parts = text.split("\t");
-  if (parts.length < 5 || parts[0] !== "WINDY_UNKNOWN_HOST_KEY") return null;
+  if (parts.length < 6 || parts[0] !== "WINDY_UNKNOWN_HOST_KEY") return null;
   const port = Number(parts[2]);
-  if (!Number.isFinite(port)) return null;
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || !parts[1] || !parts[3] || !parts[4]) return null;
   return {
     host: parts[1],
     port,
     fingerprint: parts[3],
-    knownHostsPath: parts.slice(4).join("\t"),
+    token: parts[4],
+    knownHostsPath: parts.slice(5).join("\t"),
   };
 }
 
-export function sftpConnectionTestRequestFromForm(form: SftpConnectionForm, trustHostKey: boolean) {
+export function sftpConnectionTestRequestFromForm(form: SftpConnectionForm, hostKeyApproval: PendingKnownHost | null = null) {
   return {
     name: form.name,
     host: form.host,
@@ -110,8 +111,17 @@ export function sftpConnectionTestRequestFromForm(form: SftpConnectionForm, trus
     privateKeyPath: form.privateKeyPath,
     passphrase: form.passphrase,
     remotePath: form.remotePath,
-    trustHostKey,
+    hostKeyApproval: hostKeyApproval ? {
+      token: hostKeyApproval.token,
+      host: hostKeyApproval.host,
+      port: hostKeyApproval.port,
+      fingerprint: hostKeyApproval.fingerprint,
+    } : null,
   };
+}
+
+export function cancelSftpHostKeyConfirmation(invoke: TauriInvoke, token: string): Promise<void> {
+  return invokeCommand<void>(invoke, "cancel_sftp_host_key_confirmation", { token });
 }
 
 export function sftpProfileSaveRequestFromForm(form: SftpConnectionForm) {

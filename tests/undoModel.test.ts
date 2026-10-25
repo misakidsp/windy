@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createUndoSnapshot, undoSafetyMessages } from "../src/routes/undoModel";
+import { createUndoSnapshot, undoSafetyMessages, redoSafetyMessages, localizedUndoSnapshot, historyOperationLabelId } from "../src/routes/undoModel";
 import type { FileEntry, FileOperationJob, PaneState } from "../src/routes/types";
 
 function baseJob(partial: Partial<FileOperationJob>): FileOperationJob {
@@ -67,6 +67,17 @@ assert.equal(renameUndo.job.targets[0].path, "/work/new.txt");
 assert.equal(renameUndo.job.requestedName, "old.txt");
 assert.equal(renameUndo.redoJob.commandId, "redo.rename");
 assert.equal(renameUndo.redoJob.requestedName, "new.txt");
+assert.deepEqual(renameUndo.job.targets[0].expectedState, { kind: "file", size: 10, modifiedAt: 100 });
+assert.deepEqual(renameUndo.redoJob.targets[0].expectedState, renameUndo.job.targets[0].expectedState);
+assert.notEqual(createUndoSnapshot(baseJob({}))?.job.id, createUndoSnapshot(baseJob({}))?.job.id);
+assert.equal(historyOperationLabelId(renameUndo.job), "undo.label.rename");
+assert.equal(historyOperationLabelId(renameUndo.redoJob), "undo.label.redoRename");
+const localized = localizedUndoSnapshot(renameUndo, id => `translated:${id}`);
+assert.equal(localized.job.id, renameUndo.job.id);
+assert.equal(localized.redoJob.id, renameUndo.redoJob.id);
+assert.equal(localized.job.label, "translated:undo.label.rename");
+assert.equal(localized.redoJob.label, "translated:undo.label.redoRename");
+assert.ok(redoSafetyMessages(renameUndo, pane([entry({ path: "/work/old.txt", kind: "directory" })])).some(message => message.includes("entry type")));
 
 const mkdirUndo = createUndoSnapshot(
   baseJob({
@@ -127,7 +138,7 @@ assert.deepEqual(
       entry({ name: "old.txt", path: "/work/old.txt", size: 3, modifiedAt: 90 }),
     ]),
   ),
-  ["old.txt already exists; Undo rename may conflict."],
+  ["old.txt already exists; the recorded rename may conflict."],
 );
 
 assert.deepEqual(
@@ -139,3 +150,9 @@ assert.deepEqual(
   undoSafetyMessages(mkdirUndo, pane([entry({ name: "created", path: "/work/created", kind: "file" })])),
   ["/work/created is no longer a directory."],
 );
+
+const translatedRedo = localizedUndoSnapshot(renameUndo, (id) => `translated:${id}`);
+assert.equal(translatedRedo.redoJob.confirmationMessage, "translated:operation.confirm.rename");
+assert.deepEqual(translatedRedo.redoJob.plannedActions, ["translated:operation.planned.rename"]);
+
+assert.equal(createUndoSnapshot(baseJob({ sourcePath: "sftp://server/work" })), null, "unprotected SFTP operations must not create local Undo snapshots");

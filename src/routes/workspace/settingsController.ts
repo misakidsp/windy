@@ -23,6 +23,7 @@ import type { WorkspaceState } from "./workspaceState.svelte";
 import type { WorkspaceActions } from "./workspaceActions";
 
 type Dependencies = Pick<WorkspaceActions,
+  | "loadRecoveryHistory"
   | "localizedBackendError"
   | "localizedSafeModeMessage"
 >;
@@ -118,6 +119,7 @@ export function createSettingsController(state: Pick<WorkspaceState, "app" | "se
     state.settings.preferencesError = "";
     try {
       state.settings.appSettings = await saveAppSettings(invoke, settings);
+      await actions.loadRecoveryHistory();
       state.app.notify("preferences.statusGeneralSaved", undefined, "completed", true);
       state.app.lastCommandId = "preferences.saveGeneral";
     } catch (error) {

@@ -27,10 +27,17 @@ export type AppSettings = {
   useTrash: boolean;
   operationResult: OperationResultSettings;
   operationCancel: OperationCancelSettings;
+  recovery?: RecoverySettings;
   externalEditor: ExternalEditorSettings;
   sftpSession: SftpSessionSettings;
   sftpTransfer: SftpTransferSettings;
 };
+
+export type RecoverySettings = { enabled: boolean; historyLimit: number; persistHistory: boolean };
+
+export type RecoveryRecord = { id: string; kind: FileOperationKind; state: string; createdAt: number; updatedAt?: number; sources?: [string, unknown][]; items: { beforePath: string | null; afterPath: string; state: string; staging?: string | null }[]; bytes: number };
+export type RecoveryHistory = { records: RecoveryRecord[]; issues: { path: string; messageId: string; detail: string }[] };
+export type RecoveryPlan = { record: RecoveryRecord; issues: { messageId: string; path: string }[]; paths: string[]; attributes?: { path: string; before: { mode: number; readonly: boolean; hidden: boolean }; after: { mode: number; readonly: boolean; hidden: boolean } }[] };
 
 export type OperationResultSettings = {
   notificationDisplay?: "details" | "status";
@@ -313,6 +320,7 @@ export type FileOperationTarget = {
   hidden?: boolean;
   readonly?: boolean;
   mode: number | null;
+  expectedState?: { kind: EntryKind; size?: number | null; modifiedAt?: number | null };
 };
 
 export type CommandTarget = FileOperationTarget & {
@@ -335,6 +343,9 @@ export type FileOperationJob = {
   confirmationMessage: string;
   requestedName: string | null;
   sftpSafeTransferPartThresholdBytes?: number;
+  recoverySettings?: RecoverySettings;
+  recoveryId?: string;
+  recoveryDirection?: "undo" | "redo";
   executable: boolean;
   createdAt: string;
 };
@@ -350,6 +361,8 @@ export type FileOperationResult = {
   succeeded: FileOperationResultItem[];
   failed: FileOperationResultItem[];
   canceled?: boolean;
+  recoveryId?: string | null;
+  recoveryStatus?: string | null;
 };
 
 export type OperationResultSnapshot = {
@@ -361,6 +374,7 @@ export type OperationResultSnapshot = {
 };
 
 export type UndoSnapshot = {
+  historyUpdatedAt?: number;
   label: string;
   job: FileOperationJob;
   redoLabel: string;
@@ -437,6 +451,7 @@ export type SftpConnectionTestResult = {
 };
 
 export type PendingKnownHost = {
+  token: string;
   host: string;
   port: number;
   fingerprint: string;

@@ -14,6 +14,7 @@
   export let targetSummary: string;
   export let showPaths = true;
   export let nameRequired = false;
+  export let nameReadonly = false;
   export let previewLimit = 0;
   export let conflictMessages: string[] = [];
   export let safetyMessages: string[] = [];
@@ -61,6 +62,11 @@
         {executionMessage}
       {/if}
     </div>
+    {#if job.recoveryId}
+      <!-- The scrollable plan is keyboard-focusable so long path lists can be read without a mouse. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div class="recovery-plan" tabindex="0" role="region" aria-label={t("recovery.plan")}><strong>{t("recovery.plan")}</strong>{#each job.plannedActions as action}<div>{action}</div>{/each}</div>
+    {:else}
     <div class="confirm-details">
       {#if showPaths}
         <div>{t("common.source")}: {job.sourcePath || "-"}</div>
@@ -68,6 +74,7 @@
       {/if}
       <div>{t("common.targets")}: {targetSummary}</div>
     </div>
+    {/if}
     {#if nameRequired && job.kind === "windowsAttributes"}
       <div class="windows-attribute-controls confirm-name">
         <span>{t("operation.field.attributes")}</span>
@@ -94,6 +101,7 @@
         <span>{t(job.kind === "mkdir" ? "operation.field.directoryName" : job.kind === "createFile" ? "operation.field.fileName" : job.kind === "createArchive" ? "operation.field.archiveName" : job.kind === "chmod" ? "operation.field.mode" : job.kind === "windowsAttributes" ? "operation.field.attributes" : "operation.field.newName")}</span>
         <input
           bind:this={nameInputElement}
+          readonly={nameReadonly}
           value={job.requestedName ?? ""}
           placeholder={operationInputPlaceholder()}
           spellcheck="false"
@@ -120,7 +128,7 @@
     {/if}
     {#if safetyMessages.length > 0}
       <div class="operation-safety-report">
-        <div class="operation-safety-title">{t("operation.undoCheck")}</div>
+        <div class="operation-safety-title">{t(job.recoveryId ? "recovery.plan" : "operation.undoCheck")}</div>
         {#each safetyMessages.slice(0, 5) as message}
           <div>{message}</div>
         {/each}
@@ -138,7 +146,7 @@
         <span>{t("operation.stopEnter")}{doubleEscEnabled ? " / Esc Esc" : ""}</span>
         <span>{t("operation.keepRunningEsc")}</span>
       {:else}
-        <span>{running ? (cancelRequested ? t("operation.cancelRequested") : t("operation.executing")) : t("shortcut.okEnter")}</span>
+        <span>{job.recoveryId && !job.executable ? t("recovery.blocked") : running ? (cancelRequested ? t("operation.cancelRequested") : t("operation.executing")) : t("shortcut.okEnter")}</span>
         <span>{t("shortcut.cancelEsc")}</span>
       {/if}
     </div>
@@ -146,6 +154,8 @@
 </div>
 
 <style>
+  .recovery-plan { max-height: 30vh; overflow: auto; overflow-wrap: anywhere; padding: 8px 0; user-select: text; }
+  .recovery-plan div { padding: 4px 0; }
   .dialog-backdrop {
     position: fixed;
     inset: 0;

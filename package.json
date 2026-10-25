@@ -1,6 +1,6 @@
 {
   "name": "windy",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Keyboard-first dual-pane file manager prototype.",
   "type": "module",
   "scripts": {

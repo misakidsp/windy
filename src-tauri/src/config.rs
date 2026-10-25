@@ -22,6 +22,8 @@ pub(crate) struct AppSettings {
     #[serde(default)]
     pub(crate) operation_cancel: OperationCancelSettings,
     #[serde(default)]
+    pub(crate) recovery: RecoverySettings,
+    #[serde(default)]
     pub(crate) external_editor: ExternalEditorSettings,
     #[serde(default)]
     pub(crate) sftp_session: SftpSessionSettings,
@@ -41,6 +43,8 @@ pub(crate) struct OperationSettings {
     #[serde(default)]
     pub(crate) operation_cancel: OperationCancelSettings,
     #[serde(default)]
+    pub(crate) recovery: RecoverySettings,
+    #[serde(default)]
     pub(crate) external_editor: ExternalEditorSettings,
 }
 
@@ -51,6 +55,7 @@ impl Default for OperationSettings {
             use_trash: default_use_trash(),
             operation_result: OperationResultSettings::default(),
             operation_cancel: OperationCancelSettings::default(),
+            recovery: RecoverySettings::default(),
             external_editor: ExternalEditorSettings::default(),
         }
     }
@@ -259,6 +264,7 @@ impl Default for AppSettings {
             use_trash: default_use_trash(),
             operation_result: OperationResultSettings::default(),
             operation_cancel: OperationCancelSettings::default(),
+            recovery: RecoverySettings::default(),
             external_editor: ExternalEditorSettings::default(),
             sftp_session: SftpSessionSettings::default(),
             sftp_transfer: SftpTransferSettings::default(),
@@ -985,6 +991,7 @@ pub(crate) fn load_app_settings_from_dir(config_root: &Path) -> Result<AppSettin
         use_trash: operation.use_trash,
         operation_result: operation.operation_result,
         operation_cancel: operation.operation_cancel,
+        recovery: operation.recovery,
         external_editor: operation.external_editor,
         sftp_session: sftp.sftp_session,
         sftp_transfer: sftp.sftp_transfer,
@@ -1003,6 +1010,7 @@ pub(crate) fn save_app_settings_to_dir(
             use_trash: settings.use_trash,
             operation_result: settings.operation_result.clone(),
             operation_cancel: settings.operation_cancel.clone(),
+            recovery: settings.recovery.clone(),
             external_editor: settings.external_editor.clone(),
         },
     )?;
@@ -1443,5 +1451,28 @@ mod tests {
             rest = &after_open[close + 1..];
         }
         placeholders
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RecoverySettings {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_recovery_limit")]
+    pub(crate) history_limit: usize,
+    #[serde(default)]
+    pub(crate) persist_history: bool,
+}
+fn default_recovery_limit() -> usize {
+    20
+}
+impl Default for RecoverySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            history_limit: 20,
+            persist_history: false,
+        }
     }
 }

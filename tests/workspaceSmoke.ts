@@ -3,6 +3,7 @@
 import { mount, tick, unmount } from "svelte";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
+import type { RecoveryRecord } from "../src/routes/types";
 import Page from "../src/routes/+page.svelte";
 import { createWorkspaceState } from "../src/routes/workspace/workspaceState.svelte";
 
@@ -12,8 +13,12 @@ window.addEventListener("error", event => errors.push(event.message));
 window.addEventListener("unhandledrejection", event => errors.push(String(event.reason)));
 const defaults = createWorkspaceState();
 let operationId = "";
+let recoveryRecords: RecoveryRecord[] = [];
+let recoveryHistoryIssues: { path: string; messageId: string; detail: string }[] = [];
 let finishDiff: (result: unknown) => void = () => {};
 let finishOperation: (result: unknown) => void = () => {};
+let cancelRequests = 0;
+let cancelStatus = "accepted";
 const entries = Array.from({ length: 100 }, (_, i) => ({
   key: `/demo/file-${String(i).padStart(3, "0")}.txt`,
   path: `/demo/file-${String(i).padStart(3, "0")}.txt`,
@@ -27,7 +32,10 @@ mockIPC((command, payload) => {
     case "execute_file_operation_job":
       operationId = (args.job as { id: string }).id;
       return new Promise(resolve => { finishOperation = resolve; });
-    case "save_app_settings": return args.settings;
+    case "cancel_file_operation_job": cancelRequests++; return cancelStatus;
+    case "save_app_settings":
+      defaults.settings.appSettings = args.settings as typeof defaults.settings.appSettings;
+      return args.settings;
     case "start_terminal": return 1;
     case "resize_terminal":
     case "write_terminal": return;
@@ -40,6 +48,8 @@ mockIPC((command, payload) => {
     case "home_directory": return "/demo";
     case "list_local_roots": return ["/"];
     case "list_directory": return { path: args.path, entries };
+    case "recovery_history": return { records: recoveryRecords, issues: recoveryHistoryIssues };
+    case "recovery_plan": return { record: recoveryRecords[0], issues: [], paths: ["/demo/created → retained"] };
     case "list_language_presets":
     case "list_local_favorite_profiles":
     case "list_search_profiles":
@@ -122,6 +132,9 @@ try {
   check(!document.querySelector("[role=dialog]"), "running operation uses activity instead of modal");
   check(document.querySelector(".activity-list")?.closest(".content")?.classList.contains("hidden") === false, "pane task automatically reveals activity");
   check(document.activeElement?.classList.contains("app-shell"), "operation starts with pane focus");
+  await key("Escape");
+  check(!document.querySelector("[role=dialog]") && cancelRequests === 0, "rename never offers unsupported cancellation");
+  check(document.querySelector(".app-shell")?.textContent?.includes("does not support cancellation"), "unsupported cancellation is explained");
   await emit("activity-progress", { jobId: operationId, phase: "processing", current: "/demo/file.txt", items: 1, total: 3, bytes: 1024 });
   await settle();
   check(document.querySelector(".activity-list")?.textContent?.includes("1/3"), "backend progress renders in activity");
@@ -132,6 +145,23 @@ try {
   await key("Enter", { altKey: true });
   check(document.querySelector(".details")?.textContent?.includes("Renamed"), "selected activity opens result details");
   await key("Escape");
+  for (const [operationKey, modifiers] of [["m", {}], ["d", {}], ["Delete", { shiftKey: true }]] as const) {
+    await key(operationKey, modifiers);
+    await key("Enter");
+    await key("Escape"); await key("Escape");
+    check(!document.querySelector("[role=dialog]") && cancelRequests === 0, `${operationKey} does not request unsupported cancellation`);
+    finishOperation({ succeeded: [], failed: [] }); await settle();
+  }
+  for (const response of ["accepted", "unsupported", "notRunning"]) {
+    cancelStatus = response;
+    await key("c"); await key("Enter"); await key("Escape");
+    check(!!document.querySelector("[role=dialog]"), "copy opens cancellation confirmation");
+    await key("Enter");
+    check(!document.querySelector("[role=dialog]"), "cancel response closes confirmation");
+    if (response !== "accepted") check(!document.querySelector(".activity-list")?.textContent?.includes("Canceling"), `${response} restores running state`);
+    finishOperation({ succeeded: [], failed: [], canceled: response === "accepted" }); await settle();
+  }
+  check(cancelRequests === 3, "only supported operations reach cancellation API");
   await key("t", { altKey: true });
   check(document.querySelector(".console-output") === terminalElement, "display switches preserve terminal element");
   check(document.querySelector(".console-output")?.closest(".content")?.classList.contains("hidden") === false, "pane shortcut switches display without focus");
@@ -148,6 +178,11 @@ try {
   check(list.scrollTop > scrollTop, "latest shortcut resumes following history");
   await emit("preferences-open");
   await settle();
+  const recoveryToggle = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(input => input.closest("label")?.textContent?.includes("Enable file operation recovery protection"))!;
+  check(recoveryToggle && !recoveryToggle.checked, "recovery protection defaults to off");
+  recoveryToggle.click();
+  const recoveryLimit = document.querySelector<HTMLInputElement>('input[type="number"][max="1000"]')!;
+  recoveryLimit.value = "30"; recoveryLimit.dispatchEvent(new Event("input", { bubbles: true }));
   const select = [...document.querySelectorAll<HTMLSelectElement>("select")].find(select => select.querySelector('option[value="status"]'))!;
   select.value = "status";
   select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -157,6 +192,7 @@ try {
   await key("t", { altKey: true });
   await rename();
   check(document.querySelector(".console-output")?.closest(".content")?.classList.contains("hidden") === false, "saved compact setting prevents automatic activity display");
+  check(defaults.settings.appSettings.recovery?.enabled && defaults.settings.appSettings.recovery.historyLimit === 30, "recovery protection and operation count settings are saved");
   finishOperation({ succeeded: [], failed: [] });
   await settle();
   await key(",");
@@ -176,6 +212,23 @@ try {
   await settle();
   await key("ArrowDown");
   check(document.querySelector(".file-pane.active .cursor .name")?.textContent === "file-001.txt", "remount has isolated state and one keyboard listener");
+  recoveryRecords = [{ id: "op-browser", kind: "copy", state: "applied", createdAt: Date.now(), bytes: 12, items: [{ beforePath: null, afterPath: "/demo/created", state: "applied" }] }];
+  await emit("preferences-open"); await settle();
+  recoveryHistoryIssues = [{ path: "/journal/damaged.json", messageId: "recovery.invalidRecord", detail: "unexpected end of JSON" }];
+  document.querySelector<HTMLButtonElement>(".recovery-history > button")!.click(); await settle();
+  check(document.querySelector(".recovery-history [role=alert]")?.textContent?.includes("/journal/damaged.json"), "damaged receipt is diagnosed alongside usable history");
+  check(document.querySelector(".recovery-history")?.textContent?.includes("/demo/created"), "recovery history renders recorded paths");
+  const restoreButton = [...document.querySelectorAll<HTMLButtonElement>(".recovery-history button")].find(button => button.textContent === "Investigate and undo")!;
+  restoreButton.click(); await settle();
+  check(document.querySelector("[role=dialog]")?.textContent?.includes("/demo/created → retained"), "recovery investigation opens a concrete plan");
+  check(!document.querySelector(".recovery-history"), "recovery plan closes preferences");
+  await key("Enter");
+  recoveryRecords[0].state = "undone"; recoveryRecords[0].items[0].state = "undone";
+  finishOperation({ succeeded: [{ path: "/demo/created", message: "recovery.restored" }], failed: [], recoveryId: "op-browser", recoveryStatus: "undone" }); await settle();
+  check(!document.querySelector("[role=dialog]"), "recovery execution closes confirmation");
+  await key("z", { ctrlKey: true, shiftKey: true });
+  check(document.querySelector("[role=dialog]")?.textContent?.includes("Investigate and redo"), "recovery receipt becomes Redo after execution");
+  await key("Escape");
   check(errors.length === 0, `no runtime errors: ${errors.join("; ")}`);
   output.textContent = `PASS: ${checks.length} workspace browser checks`;
   output.style.background = "#164e35";

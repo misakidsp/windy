@@ -22,6 +22,7 @@ mod file_ops;
 mod git_status;
 mod location_profiles;
 mod path_utils;
+mod recovery;
 mod search;
 mod sftp;
 mod terminal;
@@ -146,7 +147,7 @@ pub(crate) struct FileEntry {
     pub(crate) mode: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Serialize, serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum EntryKind {
     Directory,
@@ -221,8 +222,10 @@ fn get_language_settings() -> Result<LanguageSettings, String> {
 }
 
 #[tauri::command]
-fn save_app_settings(settings: AppSettings) -> Result<AppSettings, String> {
+async fn save_app_settings(mut settings: AppSettings) -> Result<AppSettings, String> {
+    settings.recovery.history_limit = settings.recovery.history_limit.clamp(1, 1000);
     save_app_settings_file(&settings)?;
+    recovery::apply_limit(settings.recovery.history_limit).await?;
     Ok(settings)
 }
 
@@ -865,6 +868,7 @@ pub fn run() {
         .manage(DetailedDiffCancellationState::default())
         .manage(SafeModeState(Mutex::new(startup_safe_mode_status)))
         .invoke_handler(tauri::generate_handler![
+            sftp::cancel_sftp_host_key_confirmation,
             home_directory,
             list_local_roots,
             get_app_settings,
@@ -919,6 +923,9 @@ pub fn run() {
             stop_terminal,
             execute_file_operation_job,
             cancel_file_operation_job,
+            recovery::recovery_history,
+            recovery::recovery_plan,
+            recovery::recovery_forget,
             save_operation_failure_log
         ])
         .run(tauri::generate_context!())
@@ -936,6 +943,7 @@ mod tests {
 
     fn target(path: &Path) -> FileOperationTarget {
         FileOperationTarget {
+            expected_state: None,
             path: path_to_string(path),
         }
     }
@@ -1204,6 +1212,10 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![target(&archive_path)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -1229,6 +1241,10 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![target(&archive_path)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -1259,6 +1275,10 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![target(&archive_path)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -1287,6 +1307,10 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![target(&archive_path)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -1323,13 +1347,19 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![
                 FileOperationTarget {
+                    expected_state: None,
                     path: format!("{}::/root.txt", path_to_string(&archive_path)),
                 },
                 FileOperationTarget {
+                    expected_state: None,
                     path: format!("{}::/docs/", path_to_string(&archive_path)),
                 },
             ],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -1359,13 +1389,19 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![
                 FileOperationTarget {
+                    expected_state: None,
                     path: format!("{}::/root.txt", path_to_string(&archive_path)),
                 },
                 FileOperationTarget {
+                    expected_state: None,
                     path: format!("{}::/docs/", path_to_string(&archive_path)),
                 },
             ],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -1398,9 +1434,14 @@ mod tests {
             kind: FileOperationKind::Copy,
             destination_path: Some(path_to_string(&destination)),
             targets: vec![FileOperationTarget {
+                expected_state: None,
                 path: format!("{}::/link.txt", path_to_string(&archive_path)),
             }],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2007,6 +2048,7 @@ mod tests {
                 ..OperationResultSettings::default()
             },
             operation_cancel: Default::default(),
+            recovery: Default::default(),
             external_editor: ExternalEditorSettings {
                 command: "code".to_string(),
                 args: vec!["--reuse-window".to_string(), "{path}".to_string()],
@@ -2031,6 +2073,7 @@ mod tests {
                 ..OperationResultSettings::default()
             },
             operation_cancel: Default::default(),
+            recovery: Default::default(),
             external_editor: ExternalEditorSettings {
                 command: "code".to_string(),
                 args: vec!["{path}".to_string()],
@@ -2430,6 +2473,10 @@ mod tests {
                 target(&source.join("existing.txt")),
             ],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2464,6 +2511,10 @@ mod tests {
                 destination_path: Some(path_to_string(&destination)),
                 targets: vec![target(&source.join("a.txt")), target(&source.join("b.txt"))],
                 requested_name: None,
+                command_id: None,
+                recovery_settings: None,
+                recovery_id: None,
+                recovery_direction: None,
                 sftp_safe_transfer_part_threshold_bytes: None,
             },
             cancellation,
@@ -2491,6 +2542,10 @@ mod tests {
             destination_path: Some(path_to_string(&child)),
             targets: vec![target(&source)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2520,6 +2575,10 @@ mod tests {
                 destination_path: Some(path_to_string(&destination)),
                 targets: vec![target(&source)],
                 requested_name: Some(archive_name.to_string()),
+                command_id: None,
+                recovery_settings: None,
+                recovery_id: None,
+                recovery_direction: None,
                 sftp_safe_transfer_part_threshold_bytes: None,
             });
 
@@ -2557,6 +2616,10 @@ mod tests {
             destination_path: Some(path_to_string(root)),
             targets: vec![target(&source.join("payload.txt"))],
             requested_name: Some("payload.rar".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(unsupported.succeeded.len(), 0);
@@ -2569,6 +2632,10 @@ mod tests {
             destination_path: Some(path_to_string(&source)),
             targets: vec![target(&source)],
             requested_name: Some("inside.zip".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(self_contained.succeeded.len(), 0);
@@ -2598,6 +2665,10 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![target(&source.join("link.txt"))],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2630,6 +2701,10 @@ mod tests {
             destination_path: Some(path_to_string(&destination)),
             targets: vec![target(&source_file)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2656,6 +2731,10 @@ mod tests {
             destination_path: Some(path_to_string(&child)),
             targets: vec![target(&source)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2680,6 +2759,10 @@ mod tests {
             destination_path: Some(path_to_string(root)),
             targets: vec![],
             requested_name: Some("created".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(mkdir_result.succeeded.len(), 1);
@@ -2691,6 +2774,10 @@ mod tests {
             destination_path: Some(path_to_string(root)),
             targets: vec![target(&file)],
             requested_name: Some("after.txt".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(rename_result.succeeded.len(), 1);
@@ -2706,6 +2793,10 @@ mod tests {
             destination_path: Some(path_to_string(root)),
             targets: vec![],
             requested_name: Some("empty.txt".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(create_file_result.succeeded.len(), 1);
@@ -2726,6 +2817,10 @@ mod tests {
             destination_path: Some(path_to_string(root)),
             targets: vec![target(&file)],
             requested_name: Some("nested/after.txt".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2739,6 +2834,10 @@ mod tests {
             destination_path: Some(path_to_string(root)),
             targets: vec![],
             requested_name: Some("nested/created".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2752,6 +2851,10 @@ mod tests {
             destination_path: Some(path_to_string(root)),
             targets: vec![],
             requested_name: Some("nested/created.txt".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2782,6 +2885,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&empty_file)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(empty_file_result.succeeded.len(), 1);
@@ -2793,6 +2900,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&non_empty_file)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(non_empty_file_result.succeeded.len(), 0);
@@ -2805,6 +2916,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&empty_dir)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(empty_dir_result.succeeded.len(), 1);
@@ -2816,6 +2931,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&non_empty_dir)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
         assert_eq!(non_empty_dir_result.succeeded.len(), 0);
@@ -2836,6 +2955,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&file)],
             requested_name: None,
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2857,6 +2980,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&file)],
             requested_name: Some("600".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2892,6 +3019,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&file)],
             requested_name: Some("999".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 
@@ -2913,6 +3044,10 @@ mod tests {
             destination_path: None,
             targets: vec![target(&file)],
             requested_name: Some("readonly=on hidden=keep".to_string()),
+            command_id: None,
+            recovery_settings: None,
+            recovery_id: None,
+            recovery_direction: None,
             sftp_safe_transfer_part_threshold_bytes: None,
         });
 

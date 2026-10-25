@@ -19,8 +19,8 @@ export function sftpEntryPath(path: string): boolean {
 }
 
 export function normalizeSftpRemotePath(path: string): string {
-  const trimmed = path.trim() || "/";
-  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  const remotePath = path || "/";
+  return remotePath.startsWith("/") ? remotePath : `/${remotePath}`;
 }
 
 export function sftpRemotePathFromEntryPath(path: string): string {

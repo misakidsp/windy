@@ -243,6 +243,8 @@ export interface WorkspaceActions {
   activeFocusedEntryPath(): string;
   applyLoadedAppearanceSettings(settings: AppearanceSettings): void;
   loadAppSettings(): Promise<void>;
+  loadRecoveryHistory(): Promise<void>;
+  previewRecoveryRecord(record: import("../types").RecoveryRecord, direction: "undo" | "redo"): void;
   loadAppearanceSettings(): Promise<void>;
   loadKeybindSettings(): Promise<void>;
   loadLanguageSettings(): Promise<void>;

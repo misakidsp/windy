@@ -185,6 +185,7 @@ const expectedBackendSourceTemplates = [
   "SFTP to SFTP copy is not implemented yet.",
   "SFTP username is required.",
   "SSH handshake failed: {error}",
+  "SSH server host key is unavailable.",
   "SSH server host key type is unknown.",
   "Safe Mode loaded default settings after backing up current config files.",
   "Safe Mode startup failed: {error}",
@@ -207,6 +208,7 @@ const expectedBackendSourceTemplates = [
   "This SFTP file operation is not implemented yet.",
   "Undo can remove only an empty SFTP file.",
   "Undo can remove only an empty file.",
+  "Undo/Redo target changed since it was recorded.",
   "Unsupported SFTP authentication kind.",
   "Uploaded to '{}'.",
   "Uploading symlinks to SFTP is not implemented yet.",
@@ -224,6 +226,11 @@ const expectedBackendSourceTemplates = [
 ];
 
 const backendMessages = [
+  "SSH host key approval is stale or does not match this connection. Connect again to confirm the current key.",
+  "Failed to set copy permissions '/tmp/copied': denied",
+  "Operation canceled.\nIncomplete output retained at '/tmp/staging'.",
+  "Failed to publish copied directory '/tmp/output': exists\nIncomplete output retained at '/tmp/staging'.",
+  "Failed to create copy staging directory '/tmp/parent': denied",
   "This SFTP file operation is not implemented yet.",
   "Refresh completed.",
   "SFTP to SFTP copy is not implemented yet.",
@@ -254,6 +261,7 @@ const backendMessages = [
   "File created.",
   "Removed empty directory.",
   "Undo can remove only an empty file.",
+  "Undo/Redo target changed since it was recorded.",
   "Removed empty file.",
   "No archive sources were resolved.",
   "Archive name must end with .zip, .tar, .tar.gz, or .tgz.",
@@ -448,7 +456,7 @@ const backendMessages = [
 ];
 
 assert.deepEqual(
-  extractedRustMessageTemplates(),
+  extractedRustMessageTemplates().filter(message => !message.startsWith("recovery.")),
   expectedBackendSourceTemplates,
   "Rust user-facing backend message templates should be represented in backend localization coverage.",
 );
@@ -459,4 +467,9 @@ for (const message of backendMessages) {
     message,
     `backend message must be localizable: ${message}`,
   );
+}
+
+for (const key of new Set([...readFileSync("src-tauri/src/recovery.rs", "utf8").matchAll(/"(recovery\.[A-Za-z]+)"/g)].map(match => match[1]))) {
+  assert.ok(japaneseSettings.messages[key], `Missing Japanese recovery message: ${key}`);
+  assert.notEqual(operationResultItemMessage({ path: "", message: key }, ja), key);
 }

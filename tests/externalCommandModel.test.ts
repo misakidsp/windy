@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   clampExternalCommandCursor,
   clipboardNameTextForCommandTargets,
@@ -10,6 +11,7 @@ import {
   selectedEntriesForPane,
   ShellQuoteError,
   shellQuotePath,
+  replaceTemplateVariables,
   type ExternalCommandContext,
 } from "../src/routes/externalCommandModel";
 import type { CommandTarget, ExternalCommandDefinition, FileEntry, PaneState } from "../src/routes/types";
@@ -143,3 +145,42 @@ const joinCommand: ExternalCommandDefinition = {
 assert.deepEqual(externalCommandLines(joinCommand, targets, context), [
   "printf '0='\\''a file.txt'\\''\n1='\\''quote'\\''\\'\\'''\\''s.txt'\\'''",
 ]);
+
+const literalName = "price$$-$&-$`-$'-{cwd}-{otherCwd}-{name}-{items}-{path}.txt";
+assert.equal(
+  replaceTemplateVariables("{args}|{args}|{unknown}|{toString}", {
+    args: literalName, cwd: "unexpected", otherCwd: "unexpected", name: "unexpected", items: "unexpected",
+  }),
+  `${literalName}|${literalName}|{unknown}|{toString}`,
+);
+for (const shellKind of ["posix", "powershell"] as const) {
+  const shellContext = { ...context, shellKind };
+  const specialTargets = [target(literalName, `/tmp/${literalName}`), target("other file", "/tmp/other file")];
+  const quote = (value: string) => shellQuotePath(value, shellKind);
+  const args = externalCommandLines({ ...argsCommand, template: "tool {args} {cwd}" }, specialTargets, shellContext);
+  assert.deepEqual(args, [`tool ${specialTargets.map((item) => quote(item.path)).join(" ")} ${quote("/tmp")}`]);
+  assert.deepEqual(
+    externalCommandLines({ ...repeatCommand, template: "tool {path} {name} {rawName} {cwd}" }, specialTargets, shellContext),
+    specialTargets.map((item) => `tool ${quote(item.path)} ${quote(item.name)} ${item.name} ${quote("/tmp")}`),
+  );
+  const joined = specialTargets.map((item) => `${item.name}=${item.path}`).join("\n");
+  assert.deepEqual(
+    externalCommandLines({ ...joinCommand, template: "tool {items}", itemTemplate: "{rawName}={rawPath}" }, specialTargets, shellContext),
+    [`tool ${quote(joined)}`],
+  );
+  if (shellKind === "posix" && process.platform !== "win32") {
+    // Run only an argument recorder to verify the final shell boundaries.
+    const result = spawnSync("/bin/sh", ["-c", `set -- ${args[0].slice("tool ".length)}; printf '%s\\0' "$@"`], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.stdout.split("\0").slice(0, -1), [...specialTargets.map((item) => item.path), "/tmp"]);
+  }
+  if (shellKind === "powershell" && process.platform === "win32") {
+    const recordArguments = `function RecordArgs { ConvertTo-Json -Compress -InputObject @($args) }; ${args[0].replace(/^tool /, "RecordArgs ")}`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", recordArguments], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [...specialTargets.map((item) => item.path), "/tmp"]);
+  }
+}
+for (const unsafe of ["%PATH%", "!name!", "line\nname", "line\rname"]) {
+  assert.throws(() => externalCommandLines(argsCommand, [target(unsafe, unsafe)], { ...context, shellKind: "cmd" }), ShellQuoteError);
+}

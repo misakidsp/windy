@@ -294,6 +294,9 @@ export function createDirectoryController(state: Pick<WorkspaceState, "activity"
   async function reloadPanesAfterOperation(job: FileOperationJob): Promise<void> {
     const paneIds = new Set<PaneId>([job.sourcePaneId]);
     if (job.destinationPaneId) paneIds.add(job.destinationPaneId);
+    // Recovery receipts describe filesystem paths, not the panes that happen
+    // to be active when Undo/Redo is requested. Refresh both visible views.
+    if (job.recoveryId) { paneIds.add("left"); paneIds.add("right"); }
 
     await Promise.all(
       [...paneIds].map((paneId) => {

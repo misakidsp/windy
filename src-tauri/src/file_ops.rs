@@ -14,7 +14,7 @@ use serde::{
     ser::{SerializeStruct, Serializer},
     Deserialize, Serialize,
 };
-use ssh2::{OpenFlags, OpenType};
+use ssh2::{OpenFlags, OpenType, RenameFlags};
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
@@ -28,22 +28,45 @@ use std::{
 };
 use tauri::State;
 
+#[cfg(test)]
+thread_local! {
+    static BEFORE_TRANSFER_PUBLISH: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn before_transfer_publish() {
+    BEFORE_TRANSFER_PUBLISH.with(|hook| {
+        let callback = hook.borrow_mut().take();
+        if let Some(callback) = callback {
+            callback();
+        }
+    });
+}
+
 const OPERATION_CANCELED_MESSAGE: &str = "Operation canceled.";
 const COPY_BUFFER_SIZE: usize = 1024 * 1024;
 
 #[derive(Default)]
 pub(crate) struct OperationCancellationState {
-    flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    flags: Mutex<HashMap<String, (Arc<AtomicBool>, bool)>>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum CancelOperationStatus {
+    Accepted,
+    Unsupported,
+    NotRunning,
 }
 
 impl OperationCancellationState {
-    fn register(&self, job_id: Option<&str>) -> Arc<AtomicBool> {
+    fn register(&self, job_id: Option<&str>, supported: bool) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
         let Some(job_id) = job_id else {
             return flag;
         };
         if let Ok(mut flags) = self.flags.lock() {
-            flags.insert(job_id.to_string(), Arc::clone(&flag));
+            flags.insert(job_id.to_string(), (Arc::clone(&flag), supported));
         }
         flag
     }
@@ -57,23 +80,34 @@ impl OperationCancellationState {
         }
     }
 
-    fn request_cancel(&self, job_id: &str) -> bool {
+    fn request_cancel(&self, job_id: &str) -> CancelOperationStatus {
         let Ok(flags) = self.flags.lock() else {
-            return false;
+            return CancelOperationStatus::NotRunning;
         };
-        let Some(flag) = flags.get(job_id) else {
-            return false;
+        let Some((flag, supported)) = flags.get(job_id) else {
+            return CancelOperationStatus::NotRunning;
         };
+        if !supported {
+            return CancelOperationStatus::Unsupported;
+        }
         flag.store(true, Ordering::SeqCst);
-        true
+        CancelOperationStatus::Accepted
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileOperationJob {
     #[serde(default)]
     pub(crate) id: Option<String>,
+    #[serde(default)]
+    pub(crate) command_id: Option<String>,
+    #[serde(default)]
+    pub(crate) recovery_settings: Option<crate::config::RecoverySettings>,
+    #[serde(default)]
+    pub(crate) recovery_id: Option<String>,
+    #[serde(default)]
+    pub(crate) recovery_direction: Option<String>,
     pub(crate) kind: FileOperationKind,
     pub(crate) destination_path: Option<String>,
     pub(crate) targets: Vec<FileOperationTarget>,
@@ -82,7 +116,7 @@ pub(crate) struct FileOperationJob {
     pub(crate) sftp_safe_transfer_part_threshold_bytes: Option<u64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum FileOperationKind {
     Copy,
@@ -101,18 +135,30 @@ pub(crate) enum FileOperationKind {
     CreateArchive,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileOperationTarget {
     pub(crate) path: String,
+    #[serde(default)]
+    pub(crate) expected_state: Option<ExpectedTargetState>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExpectedTargetState {
+    kind: EntryKind,
+    size: Option<u64>,
+    modified_at: Option<u64>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FileOperationResult {
     pub(crate) succeeded: Vec<FileOperationResultItem>,
     pub(crate) failed: Vec<FileOperationResultItem>,
     pub(crate) canceled: bool,
+    pub(crate) recovery_id: Option<String>,
+    pub(crate) recovery_status: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -150,6 +196,9 @@ fn file_operation_message_translation(
     let exact_id = match message {
         "This SFTP file operation is not implemented yet." => {
             Some("operation.resultMessage.sftpOperationUnsupported")
+        }
+        "Undo/Redo target changed since it was recorded." => {
+            Some("operation.resultMessage.historyTargetChanged")
         }
         "Refresh completed." => Some("operation.resultMessage.refreshCompleted"),
         "SFTP to SFTP copy is not implemented yet." => {
@@ -542,7 +591,8 @@ pub(crate) async fn execute_file_operation_job(
     cancellation_state: State<'_, OperationCancellationState>,
     job: FileOperationJob,
 ) -> Result<FileOperationResult, String> {
-    let cancellation = cancellation_state.register(job.id.as_deref());
+    let cancellation =
+        cancellation_state.register(job.id.as_deref(), file_operation_can_cancel(&job));
     let job_id = job.id.clone();
     if job_involves_sftp(&job) {
         let operation_state = match state.snapshot() {
@@ -558,7 +608,20 @@ pub(crate) async fn execute_file_operation_job(
                 job.id.clone(),
                 Some(job.targets.len()).filter(|count| *count > 0),
             );
-            execute_sftp_file_operation_job_blocking(&operation_state, &job, &cancellation)
+            let mut result =
+                execute_sftp_file_operation_job_blocking(&operation_state, &job, &cancellation);
+            if !result.succeeded.is_empty() {
+                if let Err(message) = crate::recovery::invalidate_after_external_change() {
+                    result.failed.push(FileOperationResultItem {
+                        path: String::new(),
+                        message,
+                    });
+                }
+            }
+            if job.recovery_settings.as_ref().is_some_and(|s| s.enabled) {
+                result.recovery_status = Some("unsupported".into());
+            }
+            result
         })
         .await
         .map_err(|error| format!("File operation task failed: {error}"));
@@ -572,7 +635,7 @@ pub(crate) async fn execute_file_operation_job(
             job.id.clone(),
             Some(job.targets.len()).filter(|count| *count > 0),
         );
-        execute_file_operation_job_blocking_with_cancellation(job, cancellation)
+        crate::recovery::execute(job, cancellation)
     })
     .await
     .map_err(|error| format!("File operation task failed: {error}"));
@@ -609,7 +672,7 @@ fn execute_sftp_file_operation_job_blocking(
 pub(crate) fn cancel_file_operation_job(
     cancellation_state: State<'_, OperationCancellationState>,
     job_id: String,
-) -> Result<bool, String> {
+) -> Result<CancelOperationStatus, String> {
     Ok(cancellation_state.request_cancel(&job_id))
 }
 
@@ -623,6 +686,8 @@ fn empty_result() -> FileOperationResult {
         succeeded: Vec::new(),
         failed: Vec::new(),
         canceled: false,
+        recovery_id: None,
+        recovery_status: None,
     }
 }
 
@@ -647,8 +712,14 @@ fn cancellation_error(cancellation: &Arc<AtomicBool>) -> Result<(), String> {
 }
 
 fn mark_canceled_if_needed(message: &str, result: &mut FileOperationResult) -> bool {
-    if message == OPERATION_CANCELED_MESSAGE {
+    if message.lines().next() == Some(OPERATION_CANCELED_MESSAGE) {
         result.canceled = true;
+        if message.contains("\nIncomplete output retained at '") {
+            result.failed.push(FileOperationResultItem {
+                path: String::new(),
+                message: message.into(),
+            });
+        }
         true
     } else {
         false
@@ -731,14 +802,27 @@ fn job_involves_sftp(job: &FileOperationJob) -> bool {
         || job.targets.iter().any(|target| is_sftp_uri(&target.path))
 }
 
-fn destination_dir(job: &FileOperationJob) -> Result<PathBuf, String> {
+fn file_operation_can_cancel(job: &FileOperationJob) -> bool {
+    if job_involves_sftp(job) {
+        return matches!(job.kind, FileOperationKind::Copy);
+    }
+    job.recovery_id.is_some()
+        || matches!(
+            job.kind,
+            FileOperationKind::Copy
+                | FileOperationKind::ExtractArchive
+                | FileOperationKind::CreateArchive
+        )
+}
+
+pub(crate) fn destination_dir(job: &FileOperationJob) -> Result<PathBuf, String> {
     job.destination_path
         .as_ref()
         .map(PathBuf::from)
         .ok_or_else(|| "Destination path is not set.".to_string())
 }
 
-fn requested_name(job: &FileOperationJob) -> Result<&str, String> {
+pub(crate) fn requested_name(job: &FileOperationJob) -> Result<&str, String> {
     let name = job
         .requested_name
         .as_deref()
@@ -1094,7 +1178,43 @@ fn download_sftp_entry(
     if sftp_download_entry_action(sftp_entry_kind(stat.perm), remote_path)?
         == SftpDownloadEntryAction::RecurseDirectory
     {
-        fs::create_dir_all(destination)
+        return stage_directory_output(destination, |output| {
+            download_sftp_entry_into(
+                sftp,
+                remote_path,
+                output,
+                part_threshold_bytes,
+                cancellation,
+                true,
+            )
+        });
+    }
+    download_sftp_entry_into(
+        sftp,
+        remote_path,
+        destination,
+        part_threshold_bytes,
+        cancellation,
+        false,
+    )
+}
+
+fn download_sftp_entry_into(
+    sftp: &ssh2::Sftp,
+    remote_path: &str,
+    destination: &Path,
+    part_threshold_bytes: Option<u64>,
+    cancellation: &Arc<AtomicBool>,
+    retain_partial: bool,
+) -> Result<(), String> {
+    cancellation_error(cancellation)?;
+    let stat = sftp
+        .lstat(Path::new(remote_path))
+        .map_err(|error| format!("Read SFTP metadata failed for '{remote_path}': {error}"))?;
+    if sftp_download_entry_action(sftp_entry_kind(stat.perm), remote_path)?
+        == SftpDownloadEntryAction::RecurseDirectory
+    {
+        fs::create_dir(destination)
             .map_err(|error| format_io_error("create download directory", destination, error))?;
         let download_result = (|| {
             let entries = sftp.readdir(Path::new(remote_path)).map_err(|error| {
@@ -1108,21 +1228,18 @@ fn download_sftp_entry(
                 if name == "." || name == ".." {
                     continue;
                 }
-                download_sftp_entry(
+                download_sftp_entry_into(
                     sftp,
                     &join_sftp_remote_path(remote_path, name),
                     &destination.join(name),
                     part_threshold_bytes,
                     cancellation,
+                    retain_partial,
                 )?;
             }
             Ok(())
         })();
-        if let Err(error) = download_result {
-            let _ = fs::remove_dir_all(destination);
-            return Err(error);
-        }
-        return Ok(());
+        return download_result;
     }
 
     if let Some(parent) = destination.parent() {
@@ -1147,7 +1264,9 @@ fn download_sftp_entry(
         copy_stream_with_cancellation(&mut remote_file, &mut local_file, cancellation)
     {
         drop(local_file);
-        let _ = fs::remove_file(&write_destination);
+        if !retain_partial {
+            let _ = fs::remove_file(&write_destination);
+        }
         if error == OPERATION_CANCELED_MESSAGE {
             return Err(error);
         }
@@ -1158,9 +1277,13 @@ fn download_sftp_entry(
         ));
     }
     if use_part_file {
-        if let Err(error) = fs::rename(&write_destination, destination) {
+        #[cfg(test)]
+        before_transfer_publish();
+        if let Err(error) = crate::recovery::move_no_replace(&write_destination, destination) {
             let message = format_io_error("finish downloaded part file", &write_destination, error);
-            let _ = fs::remove_file(&write_destination);
+            if !retain_partial {
+                let _ = fs::remove_file(&write_destination);
+            }
             return Err(message);
         }
     }
@@ -1258,8 +1381,13 @@ fn upload_local_entry_to_sftp(
     }
     drop(remote_file);
     if use_part_file {
-        if let Err(error) = sftp.rename(Path::new(&write_remote_path), Path::new(remote_path), None)
-        {
+        #[cfg(test)]
+        before_transfer_publish();
+        if let Err(error) = sftp.rename(
+            Path::new(&write_remote_path),
+            Path::new(remote_path),
+            Some(sftp_no_replace_flags()),
+        ) {
             let _ = sftp.unlink(Path::new(&write_remote_path));
             let path = &write_remote_path;
             return Err(format!(
@@ -1268,6 +1396,12 @@ fn upload_local_entry_to_sftp(
         }
     }
     Ok(())
+}
+
+fn sftp_no_replace_flags() -> RenameFlags {
+    // SFTP v3 already rejects an existing destination. Do not request native
+    // POSIX rename or the optional overwrite semantics on newer servers.
+    RenameFlags::empty()
 }
 
 fn should_use_part_file(size: Option<u64>, threshold_bytes: Option<u64>) -> bool {
@@ -1908,6 +2042,24 @@ fn move_targets(job: &FileOperationJob, result: &mut FileOperationResult) {
     }
 }
 
+// Validate the recorded rename target against the filesystem immediately before
+// applying it. This is a metadata guard, not an identity/content-hash guarantee.
+fn validate_history_target(target: &FileOperationTarget) -> Result<(), String> {
+    let Some(expected) = &target.expected_state else {
+        return Ok(());
+    };
+    let current = crate::build_file_entry(PathBuf::from(&target.path), String::new())?;
+    if current.kind != expected.kind
+        || expected.size.is_some_and(|size| current.size != Some(size))
+        || expected
+            .modified_at
+            .is_some_and(|modified| current.modified_at != Some(modified))
+    {
+        return Err("Undo/Redo target changed since it was recorded.".to_string());
+    }
+    Ok(())
+}
+
 fn rename_target(job: &FileOperationJob, result: &mut FileOperationResult) {
     let Some(target) = job.targets.first() else {
         result.failed.push(FileOperationResultItem {
@@ -1916,6 +2068,13 @@ fn rename_target(job: &FileOperationJob, result: &mut FileOperationResult) {
         });
         return;
     };
+    if let Err(message) = validate_history_target(target) {
+        result.failed.push(FileOperationResultItem {
+            path: target.path.clone(),
+            message,
+        });
+        return;
+    }
     let source = PathBuf::from(&target.path);
     let name = match requested_name(job) {
         Ok(name) => name,
@@ -2114,7 +2273,7 @@ fn set_windows_attribute_value(
 }
 
 #[cfg(unix)]
-fn set_local_mode(path: &Path, mode: u32) -> Result<(), String> {
+pub(crate) fn set_local_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut permissions = fs::metadata(path)
@@ -2126,7 +2285,7 @@ fn set_local_mode(path: &Path, mode: u32) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
-fn set_local_mode(path: &Path, _mode: u32) -> Result<(), String> {
+pub(crate) fn set_local_mode(path: &Path, _mode: u32) -> Result<(), String> {
     Err(format!(
         "POSIX chmod mode is not supported on this platform: {}",
         path.display()
@@ -2330,7 +2489,7 @@ fn remove_empty_file(job: &FileOperationJob, result: &mut FileOperationResult) {
         return;
     };
     let path = PathBuf::from(&target.path);
-    let metadata = match fs::metadata(&path) {
+    let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) => {
             result.failed.push(FileOperationResultItem {
@@ -2479,15 +2638,57 @@ fn copy_entry(
     {
         copy_symlink(source, destination)?;
     } else if source.is_dir() {
-        if let Err(error) = copy_directory(source, destination, cancellation) {
-            let _ = fs::remove_dir_all(destination);
-            return Err(error);
-        }
+        stage_directory_output(destination, |output| {
+            copy_directory(source, output, cancellation)
+        })?;
     } else {
         copy_file_with_cancellation(source, destination, cancellation)?;
     }
 
     Ok(destination.to_path_buf())
+}
+
+// Build directory outputs privately and publish only with a non-overwriting
+// rename. Failures preserve the entire staging directory, including additions
+// made by another process; no recursive cleanup can delete someone else's data.
+fn stage_directory_output(
+    destination: &Path,
+    build: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("Destination has no parent: '{}'", destination.display()))?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".windy-copy-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    let staging = builder
+        .tempdir_in(parent)
+        .map_err(|error| format_io_error("create copy staging directory", parent, error))?
+        .keep();
+    let output = staging.join("output");
+    let result = build(&output).and_then(|()| {
+        #[cfg(test)]
+        before_transfer_publish();
+        crate::recovery::move_no_replace(&output, destination)
+            .map_err(|error| format_io_error("publish copied directory", destination, error))
+    });
+    if let Err(error) = result {
+        // Only remove a demonstrably empty directory. Never remove partial
+        // output, or a file added externally during failure/cancellation.
+        if fs::remove_dir(&staging).is_err() {
+            return Err(format!(
+                "{error}\nIncomplete output retained at '{}'.",
+                staging.display()
+            ));
+        }
+        return Err(error);
+    }
+    let _ = fs::remove_dir(&staging);
+    Ok(())
 }
 
 fn copy_directory(
@@ -2515,7 +2716,7 @@ fn copy_directory(
         } else if entry_source.is_dir() {
             copy_directory(&entry_source, &entry_destination, cancellation)?;
         } else {
-            copy_file_with_cancellation(&entry_source, &entry_destination, cancellation)?;
+            copy_file_with_retention(&entry_source, &entry_destination, cancellation, true)?;
         }
     }
 
@@ -2527,22 +2728,59 @@ fn copy_file_with_cancellation(
     destination: &Path,
     cancellation: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    copy_file_with_retention(source, destination, cancellation, false)
+}
+
+fn copy_file_with_retention(
+    source: &Path,
+    destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+    retain_partial: bool,
+) -> Result<(), String> {
     let mut input = fs::File::open(source)
         .map_err(|error| format_io_error("open copy source", source, error))?;
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .map_err(|error| format_io_error("create copy destination", destination, error))?;
-    if let Err(error) = copy_stream_with_cancellation(&mut input, &mut output, cancellation) {
+    let permissions = input
+        .metadata()
+        .map_err(|error| format_io_error("read metadata", source, error))?
+        .permissions();
+    let mut output = create_copy_destination(destination, &permissions)?;
+    let result =
+        copy_stream_with_cancellation(&mut input, &mut output, cancellation).and_then(|_| {
+            output
+                .set_permissions(permissions)
+                .map_err(|error| format_io_error("set copy permissions", destination, error))
+        });
+    if let Err(error) = result {
         drop(output);
-        let _ = fs::remove_file(destination);
+        if !retain_partial {
+            let _ = fs::remove_file(destination);
+        }
         if error == OPERATION_CANCELED_MESSAGE {
             return Err(error);
         }
         return Err(transfer_error("copy", source, error));
     }
     Ok(())
+}
+
+fn create_copy_destination(
+    destination: &Path,
+    permissions: &fs::Permissions,
+) -> Result<fs::File, String> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        // Restrict access from the instant the file is created. umask may
+        // restrict further; final permissions are applied through the handle.
+        options.mode(permissions.mode() & 0o777);
+    }
+    #[cfg(not(unix))]
+    let _ = permissions;
+    options
+        .open(destination)
+        .map_err(|error| format_io_error("create copy destination", destination, error))
 }
 
 fn transfer_error(operation: &str, path: &Path, error: String) -> String {
@@ -2590,7 +2828,8 @@ fn move_entry(source: &Path, destination: &Path) -> Result<PathBuf, String> {
 
     ensure_destination_is_not_inside_source(source, destination, "move")?;
 
-    fs::rename(source, destination).map_err(|error| format_io_error("move", source, error))?;
+    crate::recovery::move_no_replace(source, destination)
+        .map_err(|error| format_io_error("move", source, error))?;
     Ok(destination.to_path_buf())
 }
 
@@ -2640,9 +2879,572 @@ fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
     }
 }
 
+pub(crate) fn restore_windows_attributes(
+    path: &Path,
+    readonly: bool,
+    hidden: bool,
+) -> Result<(), String> {
+    set_windows_attributes(
+        path,
+        WindowsAttributePatch {
+            readonly: Some(readonly),
+            hidden: Some(hidden),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellation_registry_never_accepts_unsupported_operations() {
+        let state = OperationCancellationState::default();
+        for kind in [
+            "delete",
+            "trash",
+            "move",
+            "rename",
+            "chmod",
+            "windowsAttributes",
+            "mkdir",
+            "createFile",
+            "removeEmptyDirectory",
+            "removeEmptyFile",
+            "refresh",
+            "copy",
+            "extractArchive",
+            "createArchive",
+        ] {
+            let job: FileOperationJob = serde_json::from_value(serde_json::json!({
+                "id":kind, "kind":kind, "destinationPath":"/tmp", "targets":[], "requestedName":null
+            }))
+            .expect("deserialize cancellation fixture");
+            let supported = ["copy", "extractArchive", "createArchive"].contains(&kind);
+            assert_eq!(file_operation_can_cancel(&job), supported, "{kind}");
+            let flag = state.register(job.id.as_deref(), file_operation_can_cancel(&job));
+            assert_eq!(
+                state.request_cancel(kind),
+                if supported {
+                    CancelOperationStatus::Accepted
+                } else {
+                    CancelOperationStatus::Unsupported
+                }
+            );
+            assert_eq!(flag.load(Ordering::SeqCst), supported);
+            state.unregister(job.id.as_deref());
+            assert_eq!(
+                state.request_cancel(kind),
+                CancelOperationStatus::NotRunning
+            );
+        }
+        let mut job: FileOperationJob = serde_json::from_value(serde_json::json!({
+            "kind":"rename", "destinationPath":"/tmp", "targets":[], "requestedName":null, "recoveryId":"receipt"
+        })).expect("deserialize restore cancellation fixture");
+        assert!(file_operation_can_cancel(&job));
+        job.destination_path = Some("sftp://conn/tmp".into());
+        assert!(!file_operation_can_cancel(&job));
+        job.kind = FileOperationKind::Copy;
+        assert!(file_operation_can_cancel(&job));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_copy_preserves_permissions_and_restricts_access_while_writing() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("create permissions fixture");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        for mode in [0o755, 0o600, 0o444] {
+            let source = root.path().join(format!("source-{mode:o}"));
+            fs::write(&source, b"copy permissions").expect("write permissions fixture");
+            let permissions = fs::Permissions::from_mode(mode);
+            fs::set_permissions(&source, permissions.clone()).expect("set source mode");
+            let writing_path = root.path().join(format!("writing-{mode:o}"));
+            let writing = create_copy_destination(&writing_path, &permissions)
+                .expect("create restricted destination");
+            let writing_mode = writing
+                .metadata()
+                .expect("inspect newly created file")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(
+                writing_mode & !mode,
+                0,
+                "copy is never more accessible than source"
+            );
+            let destination = root.path().join(format!("copied-{mode:o}"));
+            copy_entry(&source, &destination, &cancellation).expect("copy permissions fixture");
+            assert_eq!(
+                fs::metadata(&destination)
+                    .expect("inspect copied mode")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                mode
+            );
+            assert_eq!(
+                fs::read(&destination).expect("read copied data"),
+                b"copy permissions"
+            );
+        }
+        let source_directory = root.path().join("tree");
+        fs::create_dir(&source_directory).expect("create recursive fixture");
+        let executable = source_directory.join("run");
+        fs::write(&executable, b"executable").expect("write recursive fixture");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("set executable mode");
+        let copied_directory = root.path().join("copied-tree");
+        copy_entry(&source_directory, &copied_directory, &cancellation)
+            .expect("copy recursive fixture");
+        assert_eq!(
+            fs::metadata(copied_directory.join("run"))
+                .expect("inspect recursive copy")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_copy_preserves_readonly_files_including_recursive_copies() {
+        let root = tempfile::tempdir().expect("create readonly fixture");
+        let directory = root.path().join("tree");
+        fs::create_dir(&directory).expect("create readonly source directory");
+        let source = directory.join("readonly");
+        fs::write(&source, b"readonly data").expect("write readonly source");
+        let writable_permissions = fs::metadata(&source)
+            .expect("read source permissions")
+            .permissions();
+        let mut permissions = writable_permissions.clone();
+        permissions.set_readonly(true);
+        fs::set_permissions(&source, permissions).expect("mark source readonly");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let destination = root.path().join("copied");
+        copy_entry(&source, &destination, &cancellation).expect("copy readonly file");
+        let recursive = root.path().join("copied-tree");
+        copy_entry(&directory, &recursive, &cancellation).expect("copy readonly tree");
+        for file in [&source, &destination, &recursive.join("readonly")] {
+            let permissions = fs::metadata(file)
+                .expect("inspect readonly copy")
+                .permissions();
+            assert!(permissions.readonly());
+            assert_eq!(
+                fs::read(file).expect("read readonly contents"),
+                b"readonly data"
+            );
+            fs::set_permissions(file, writable_permissions.clone())
+                .expect("restore original permissions for fixture cleanup");
+        }
+    }
+
+    #[test]
+    fn local_copy_keeps_collision_and_cancellation_contracts() {
+        let root = tempfile::tempdir().expect("create copy contract fixture");
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        fs::write(&source, b"source data").expect("write copy source");
+        fs::write(&destination, b"external data").expect("write conflicting destination");
+        assert!(copy_file_with_cancellation(
+            &source,
+            &destination,
+            &Arc::new(AtomicBool::new(false))
+        )
+        .is_err());
+        assert_eq!(
+            fs::read(&destination).expect("read preserved destination"),
+            b"external data"
+        );
+        let canceled = root.path().join("canceled");
+        assert_eq!(
+            copy_file_with_cancellation(&source, &canceled, &Arc::new(AtomicBool::new(true))),
+            Err(OPERATION_CANCELED_MESSAGE.into())
+        );
+        assert!(!canceled.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires an isolated loopback SFTP server and WINDY_SFTP_TEST_ROOT"]
+    fn loopback_sftp_transfer_conflicts_preserve_external_destinations() {
+        let root = PathBuf::from(
+            std::env::var("WINDY_SFTP_TEST_ROOT").expect("read isolated SFTP test configuration"),
+        );
+        let tcp = std::net::TcpStream::connect("127.0.0.1:40226")
+            .expect("connect to loopback SFTP server");
+        let mut session = ssh2::Session::new().expect("create test SSH session");
+        session.set_tcp_stream(tcp);
+        session.set_timeout(5000);
+        session.handshake().expect("perform test SSH handshake");
+        session
+            .userauth_pubkey_file(
+                &std::env::var("USER").expect("read isolated SFTP test configuration"),
+                None,
+                &root.join("client"),
+                None,
+            )
+            .expect("read isolated SFTP test configuration");
+        assert!(session.authenticated());
+        let sftp = session.sftp().expect("open test SFTP subsystem");
+        let test_directory = tempfile::tempdir_in(&root).expect("create isolated fixture");
+        let root = test_directory.path().to_path_buf();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let source = root.join("upload-source");
+        fs::write(&source, b"transferred contents").expect("write fixture contents");
+        let remote = root.join("upload-target");
+        let conflict = remote.clone();
+        BEFORE_TRANSFER_PUBLISH.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(conflict, b"external upload destination")
+                    .expect("write fixture contents");
+            }))
+        });
+        let error = upload_local_entry_to_sftp(
+            &sftp,
+            &source,
+            remote.to_str().expect("upload fixture data"),
+            Some(1),
+            &cancellation,
+        )
+        .unwrap_err();
+        assert!(error.contains("Finalize SFTP part file failed"));
+        assert_eq!(
+            fs::read(&remote).expect("read fixture contents"),
+            b"external upload destination"
+        );
+        assert!(!remote.with_file_name("upload-target.part").exists());
+        let download = root.join("download-target");
+        let conflict = download.clone();
+        BEFORE_TRANSFER_PUBLISH.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::write(conflict, b"external download destination")
+                    .expect("write fixture contents");
+            }))
+        });
+        let error = download_sftp_entry(
+            &sftp,
+            source.to_str().expect("download fixture data"),
+            &download,
+            Some(1),
+            &cancellation,
+        )
+        .unwrap_err();
+        assert!(error.contains("finish downloaded part file"));
+        assert_eq!(
+            fs::read(&download).expect("read fixture contents"),
+            b"external download destination"
+        );
+        assert!(!download.with_file_name("download-target.part").exists());
+        let remote_ok = root.join("upload-ok");
+        upload_local_entry_to_sftp(
+            &sftp,
+            &source,
+            remote_ok.to_str().expect("upload fixture data"),
+            Some(1),
+            &cancellation,
+        )
+        .expect("upload fixture data");
+        let local_ok = root.join("download-ok");
+        download_sftp_entry(
+            &sftp,
+            remote_ok.to_str().expect("download fixture data"),
+            &local_ok,
+            Some(1),
+            &cancellation,
+        )
+        .expect("download fixture data");
+        assert_eq!(
+            fs::read(local_ok).expect("read fixture contents"),
+            b"transferred contents"
+        );
+        let directory = root.join("remote-directory");
+        fs::create_dir(&directory).expect("create fixture directory");
+        fs::write(directory.join("file"), b"directory transfer").expect("write fixture contents");
+        let directory_copy = root.join("download-directory");
+        download_sftp_entry(
+            &sftp,
+            directory.to_str().expect("download fixture data"),
+            &directory_copy,
+            Some(1),
+            &cancellation,
+        )
+        .expect("download fixture data");
+        assert_eq!(
+            fs::read(directory_copy.join("file")).expect("read fixture contents"),
+            b"directory transfer"
+        );
+        let whitespace_directory = root.join("remote-directory ");
+        fs::create_dir(&whitespace_directory).expect("create whitespace transfer directory");
+        for name in ["report", "report ", "report\t", "report\u{3000}"] {
+            fs::write(whitespace_directory.join(name), name.as_bytes())
+                .expect("write exact transfer filename");
+        }
+        let whitespace_copy = root.join("download-whitespace");
+        download_sftp_entry(
+            &sftp,
+            whitespace_directory
+                .to_str()
+                .expect("remote whitespace path"),
+            &whitespace_copy,
+            Some(1),
+            &cancellation,
+        )
+        .expect("download whitespace directory recursively");
+        for name in ["report", "report ", "report\t", "report\u{3000}"] {
+            assert_eq!(
+                fs::read(whitespace_copy.join(name)).expect("read exact downloaded filename"),
+                name.as_bytes()
+            );
+        }
+        let whitespace_upload = root.join("upload-directory ");
+        upload_local_entry_to_sftp(
+            &sftp,
+            &whitespace_copy,
+            whitespace_upload
+                .to_str()
+                .expect("remote whitespace destination"),
+            Some(1),
+            &cancellation,
+        )
+        .expect("upload whitespace directory recursively");
+        for name in ["report", "report ", "report\t", "report\u{3000}"] {
+            assert_eq!(
+                fs::read(whitespace_upload.join(name)).expect("read exact uploaded filename"),
+                name.as_bytes()
+            );
+        }
+        let conflict_copy = root.join("download-directory-conflict");
+        let conflict = conflict_copy.clone();
+        BEFORE_TRANSFER_PUBLISH.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                fs::create_dir(&conflict).expect("create fixture directory");
+                fs::write(conflict.join("marker"), b"external directory")
+                    .expect("write fixture contents");
+            }))
+        });
+        let error = download_sftp_entry(
+            &sftp,
+            directory.to_str().expect("download fixture data"),
+            &conflict_copy,
+            None,
+            &cancellation,
+        )
+        .unwrap_err();
+        assert!(error.contains("Incomplete output retained"));
+        assert_eq!(
+            fs::read(conflict_copy.join("marker")).expect("read fixture contents"),
+            b"external directory"
+        );
+        let failing_directory = root.join("remote-directory-failing");
+        fs::create_dir(&failing_directory).expect("create fixture directory");
+        std::os::unix::fs::symlink(&source, failing_directory.join("unsupported-link"))
+            .expect("create fixture symlink");
+        let failed_copy = root.join("download-directory-failed");
+        let error = download_sftp_entry(
+            &sftp,
+            failing_directory.to_str().expect("download fixture data"),
+            &failed_copy,
+            None,
+            &cancellation,
+        )
+        .unwrap_err();
+        assert!(error.contains("Incomplete output retained"));
+        assert!(!failed_copy.exists());
+    }
+
+    #[test]
+    fn directory_publish_conflict_preserves_external_and_partial_contents() {
+        let root = tempfile::tempdir().expect("create isolated fixture");
+        let destination = root.path().join("destination");
+        let mut retained = None;
+        let error = stage_directory_output(&destination, |output| {
+            fs::create_dir(output).expect("create fixture directory");
+            fs::write(output.join("copied"), b"copied data").expect("write fixture contents");
+            fs::create_dir(&destination).expect("create fixture directory");
+            fs::write(destination.join("marker"), b"external data")
+                .expect("write fixture contents");
+            retained = Some(output.to_path_buf());
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.contains("Incomplete output retained"));
+        assert_eq!(
+            fs::read(destination.join("marker")).expect("read fixture contents"),
+            b"external data"
+        );
+        assert_eq!(
+            fs::read(retained.expect("read fixture contents").join("copied"))
+                .expect("read fixture contents"),
+            b"copied data"
+        );
+    }
+
+    #[test]
+    fn directory_failure_and_cancellation_preserve_external_additions() {
+        for cause in [
+            "Read SFTP directory failed: disconnected",
+            OPERATION_CANCELED_MESSAGE,
+        ] {
+            let root = tempfile::tempdir().expect("create isolated fixture");
+            let destination = root.path().join("destination");
+            let mut retained = None;
+            let error = stage_directory_output(&destination, |output| {
+                fs::create_dir(output).expect("create fixture directory");
+                fs::write(output.join("copied"), b"partial data").expect("write fixture contents");
+                fs::write(output.join("external"), b"external addition")
+                    .expect("write fixture contents");
+                retained = Some(output.to_path_buf());
+                Err(cause.into())
+            })
+            .unwrap_err();
+            assert!(error.starts_with(cause));
+            assert!(!destination.exists());
+            let retained = retained.expect("write fixture contents");
+            assert_eq!(
+                fs::read(retained.join("copied")).expect("read fixture contents"),
+                b"partial data"
+            );
+            assert_eq!(
+                fs::read(retained.join("external")).expect("read fixture contents"),
+                b"external addition"
+            );
+            let mut result = empty_result();
+            if cause == OPERATION_CANCELED_MESSAGE {
+                assert!(mark_canceled_if_needed(&error, &mut result));
+                assert!(result.canceled);
+                assert_eq!(result.failed[0].message, error);
+            }
+        }
+    }
+
+    #[test]
+    fn staging_keeps_partial_files_when_copy_is_canceled() {
+        let root = tempfile::tempdir().expect("create isolated copy fixture");
+        let source = root.path().join("source");
+        fs::write(&source, b"source contents").expect("write source fixture");
+        let destination = root.path().join("destination");
+        let error = stage_directory_output(&destination, |output| {
+            fs::create_dir(output).expect("create staged output directory");
+            copy_file_with_retention(
+                &source,
+                &output.join("partial"),
+                &Arc::new(AtomicBool::new(true)),
+                true,
+            )
+        })
+        .unwrap_err();
+        assert!(error.starts_with(OPERATION_CANCELED_MESSAGE));
+        let staging = fs::read_dir(root.path())
+            .expect("list copy fixture")
+            .map(|e| e.expect("read fixture entry").path())
+            .find(|p| {
+                p.file_name()
+                    .expect("fixture name")
+                    .to_string_lossy()
+                    .starts_with(".windy-copy-")
+            })
+            .expect("retained staging directory");
+        assert!(staging.join("output/partial").is_file());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn directory_copy_publishes_complete_output_and_removes_empty_staging() {
+        let root = tempfile::tempdir().expect("create isolated fixture");
+        let source = root.path().join("source");
+        fs::create_dir_all(source.join("sub")).expect("create fixture directory");
+        fs::write(source.join("sub/file"), b"copied data").expect("write fixture contents");
+        let destination = root.path().join("destination");
+        copy_entry(&source, &destination, &Arc::new(AtomicBool::new(false)))
+            .expect("copy fixture directory");
+        assert_eq!(
+            fs::read(destination.join("sub/file")).expect("read fixture contents"),
+            b"copied data"
+        );
+        assert_eq!(
+            fs::read_dir(root.path())
+                .expect("list fixture directory")
+                .count(),
+            2
+        );
+    }
+
+    fn recorded_rename(path: &Path, expected: serde_json::Value) -> FileOperationJob {
+        serde_json::from_value(serde_json::json!({
+            "kind": "rename", "destinationPath": path.parent().unwrap().to_str(),
+            "targets": [{ "path": path.to_str(), "expectedState": expected }],
+            "requestedName": "restored.txt"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn history_rename_rejects_external_metadata_changes_and_preserves_files() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("renamed.txt");
+        fs::write(&path, b"changed content").unwrap();
+        for expected in [
+            serde_json::json!({"kind":"file", "size": 1}),
+            serde_json::json!({"kind":"directory"}),
+            serde_json::json!({"kind":"file", "modifiedAt": 0}),
+        ] {
+            let result = execute_file_operation_job_blocking(recorded_rename(&path, expected));
+            assert!(result.succeeded.is_empty());
+            assert_eq!(result.failed.len(), 1);
+            assert_eq!(
+                serde_json::to_value(&result.failed[0]).unwrap()["messageId"],
+                "operation.resultMessage.historyTargetChanged"
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"changed content");
+            assert!(!root.path().join("restored.txt").exists());
+        }
+    }
+
+    #[test]
+    fn history_rename_accepts_matching_metadata_and_rejects_collisions() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("renamed.txt");
+        fs::write(&path, b"content").unwrap();
+        let expected = serde_json::json!({"kind":"file", "size":7});
+        fs::write(root.path().join("restored.txt"), b"do not overwrite").unwrap();
+        let conflict =
+            execute_file_operation_job_blocking(recorded_rename(&path, expected.clone()));
+        assert!(conflict.succeeded.is_empty());
+        assert_eq!(
+            fs::read(root.path().join("restored.txt")).unwrap(),
+            b"do not overwrite"
+        );
+        fs::remove_file(root.path().join("restored.txt")).unwrap();
+        let result = execute_file_operation_job_blocking(recorded_rename(&path, expected));
+        assert!(result.failed.is_empty());
+        assert_eq!(result.succeeded.len(), 1);
+        assert_eq!(
+            fs::read(root.path().join("restored.txt")).unwrap(),
+            b"content"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_empty_file_rejects_a_replacement_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("original");
+        let replacement = root.path().join("replacement");
+        fs::write(&original, b"").unwrap();
+        std::os::unix::fs::symlink(&original, &replacement).unwrap();
+        let job: FileOperationJob = serde_json::from_value(serde_json::json!({
+            "kind":"removeEmptyFile", "destinationPath":null,
+            "targets":[{"path":replacement.to_str()}], "requestedName":null
+        }))
+        .unwrap();
+        let result = execute_file_operation_job_blocking(job);
+        assert!(result.succeeded.is_empty());
+        assert_eq!(result.failed.len(), 1);
+        assert!(replacement.is_symlink());
+        assert!(original.exists());
+    }
 
     struct CancelAfterFirstRead {
         cancellation: Arc<AtomicBool>,

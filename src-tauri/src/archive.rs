@@ -360,6 +360,15 @@ pub(crate) fn create_archive_from_sources(
     destination: &Path,
     cancellation: &Arc<AtomicBool>,
 ) -> Result<(), String> {
+    create_archive_with_before_publish(sources, destination, cancellation, || {})
+}
+
+fn create_archive_with_before_publish(
+    sources: &[PathBuf],
+    destination: &Path,
+    cancellation: &Arc<AtomicBool>,
+    before_publish: impl FnOnce(),
+) -> Result<(), String> {
     if sources.is_empty() {
         return Err("No archive sources were resolved.".to_string());
     }
@@ -407,7 +416,8 @@ pub(crate) fn create_archive_from_sources(
         return Err(message);
     }
 
-    fs::rename(&part_destination, destination).map_err(|error| {
+    before_publish();
+    crate::recovery::move_no_replace(&part_destination, destination).map_err(|error| {
         let _ = fs::remove_file(&part_destination);
         format_io_error("finish archive", &part_destination, error)
     })
@@ -673,7 +683,7 @@ fn ensure_archive_destination_is_not_inside_source(
     Ok(())
 }
 
-fn archive_destination_stem(archive_path: &Path) -> Result<String, String> {
+pub(crate) fn archive_destination_stem(archive_path: &Path) -> Result<String, String> {
     let file_name = archive_path
         .file_name()
         .and_then(|value| value.to_str())
@@ -1222,6 +1232,42 @@ fn archive_inner_leaf_name(inner_path: &str) -> Result<&str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creation_does_not_replace_a_destination_created_before_publish() {
+        for name in ["result.zip", "result.tar", "result.tar.gz"] {
+            let root = tempfile::tempdir().expect("create isolated fixture");
+            let source = root.path().join("source.txt");
+            fs::write(&source, b"archive source").expect("write fixture contents");
+            let destination = root.path().join(name);
+            let cancellation = Arc::new(AtomicBool::new(false));
+            let error = create_archive_with_before_publish(
+                std::slice::from_ref(&source),
+                &destination,
+                &cancellation,
+                || {
+                    assert!(archive_part_path(&destination)
+                        .expect("resolve archive part path")
+                        .exists());
+                    fs::write(&destination, b"external destination")
+                        .expect("write fixture contents");
+                },
+            )
+            .unwrap_err();
+            assert!(error.contains("finish archive"));
+            assert_eq!(
+                fs::read(&destination).expect("read fixture contents"),
+                b"external destination"
+            );
+            assert_eq!(
+                fs::read(&source).expect("read fixture contents"),
+                b"archive source"
+            );
+            assert!(!archive_part_path(&destination)
+                .expect("resolve archive part path")
+                .exists());
+        }
+    }
 
     #[test]
     fn archive_destination_rejects_parent_traversal() {
